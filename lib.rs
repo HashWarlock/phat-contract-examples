@@ -4,59 +4,106 @@ extern crate alloc;
 use pink_extension as pink;
 
 #[pink::contract(env=PinkEnvironment)]
-mod fat_sample {
+mod phat_auction {
     use super::pink;
     use alloc::{
+        format,
         string::{String, ToString},
+        vec,
         vec::Vec,
     };
     use ink_storage::{traits::SpreadAllocate, Mapping};
-    use pink::{
-        chain_extension::SigType, derive_sr25519_key, get_public_key, http_get, sign, verify,
-        PinkEnvironment,
-    };
+    use pink::{http_get, http_post, PinkEnvironment};
     use scale::{Decode, Encode};
+    use serde::Deserialize;
+    use serde_json::json;
+
+    /// RMRK NFT structure
+    #[derive(Deserialize, Debug, Eq, PartialEq)]
+    pub struct RmrkNft {
+        id: String,
+        metadata: String,
+        image: String,
+        rootowner: String,
+    }
 
     #[ink(storage)]
     #[derive(SpreadAllocate)]
-    pub struct FatSample {
+    pub struct PhatAuction {
+        /// Admin of the Auctions
         admin: AccountId,
-        attestation_privkey: Vec<u8>,
-        attestation_pubkey: Vec<u8>,
-        poap_code: Vec<String>,
-
-        /// Map from the account to the redemption index
-        ///
-        /// Thus the POAP code should be `poap_code[index]`.
-        redeem_by_account: Mapping<AccountId, u32>,
-        /// The number of total redeemed code.
-        total_redeemed: u32,
+        /// Token id
+        token_id: String,
+        /// Top bidder
+        top_bidder: AccountId,
         /// Map from verified accounts to usernames
         username_by_account: Mapping<AccountId, String>,
-        /// Map from verified usernames to accounts
-        account_by_username: Mapping<String, AccountId>,
+        /// The minimum price accepted in an auction
+        reserve_price: u128,
+        /// The minimum percentage increase between bids
+        bid_increment: u128,
+        /// Auction is settled bool
+        settled: bool,
+        /// Chat id
+        chat_id: String,
+        /// Bot id
+        bot_id: String,
+    }
+
+    #[ink(event)]
+    pub struct AuctionCreated {
+        owner: AccountId,
+        token_id: String,
+    }
+
+    #[ink(event)]
+    pub struct AuctionBid {
+        token_id: String,
+        amount: u128,
+        //extended: bool,
+    }
+
+    #[ink(event)]
+    pub struct AuctionSettled {
+        token_id: String,
+        winner: AccountId,
+        amount: u128,
+    }
+
+    #[ink(event)]
+    pub struct AuctionSettingsUpdated {
+        reserve_price: Balance,
+        bid_increment: u128,
+    }
+
+    #[ink(event)]
+    pub struct AuctionBotUpdated {
+        updated: bool,
     }
 
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
-        InvalidUrl,
-        RequestFailed,
-        NoClaimFound,
-        InvalidAddressLength,
-        InvalidAddress,
-        NoPermission,
-        InvalidSignature,
+        NotOwner,
+        NotApproved,
+        HttpResponseError,
+        OwnerCannotBidOnToken,
+        TokenNotForAuction,
+        TokenAuctionExpired,
+        TokenAuctionNotFound,
+        TokenValidationFailed,
+        BidBelowReservePrice,
+        BidBelowBidIncrement,
+        TokenAuctionHasNotStarted,
+        TokenAuctionInProgress,
+        AlreadyTopBid,
         UsernameAlreadyInUse,
-        AccountAlreadyInUse,
+        NoWinner,
     }
 
-    impl FatSample {
+    impl PhatAuction {
         #[ink(constructor)]
         pub fn default() -> Self {
-            // Generate a Sr25519 key pair
-            let privkey = derive_sr25519_key!(b"gist-attestation-key");
-            let pubkey = get_public_key!(&privkey, SigType::Sr25519);
             // Save sender as the contract admin
             let admin = Self::env().caller();
 
@@ -64,200 +111,225 @@ mod fat_sample {
             // `Mapping`s of our contract.
             ink_lang::codegen::initialize_contract(|contract: &mut Self| {
                 contract.admin = admin;
-                contract.attestation_privkey = privkey;
-                contract.attestation_pubkey = pubkey;
-                contract.total_redeemed = 0u32;
+                contract.top_bidder = admin;
+                contract.token_id = Default::default();
+                contract.reserve_price = 0u128;
+                contract.bid_increment = 0u128;
+                contract.settled = true;
+                contract.chat_id = Default::default();
+                contract.bot_id = Default::default();
             })
         }
 
-        /// Sets the POAP redemption code. (callable, admin-only)
+        /// Configure Auction Bot
         ///
-        /// The admin must set enough POAP code while setting up the contract. The code can be
-        /// overrode at any time.
+        /// The admin must set up an auction bot that will relay the auction results to a private Telegram Group
         #[ink(message)]
-        pub fn admin_set_poap_code(&mut self, code: Vec<String>) -> Result<(), Error> {
-            // TODO: add access control to only allow the self.admin to set the poap code
-            //
+        pub fn admin_set_auction_bot(
+            &mut self,
+            chat_id: String,
+            bot_id: String,
+        ) -> Result<(), Error> {
             // Hint: get the metadata about the contract through self.env()
-
-            // Update the code
-            self.poap_code = code;
-            Ok(())
-        }
-
-        /// Redeems a POAP with a signed `attestation`. (callable)
-        ///
-        /// The attestation must be created by [attest_gist] function. After the verification of
-        /// the attestation, the the sender account will the linked to a Github username. Then a
-        /// POAP redemption code will be allocated to the sender.
-        ///
-        /// Each blockchain account and github account can only be linked once.
-        #[ink(message)]
-        pub fn redeem(&mut self, signed: SignedAttestation) -> Result<(), Error> {
-            // Verify the attestation
-            let attestation = self.verify_attestation(signed)?;
-            // The caller must be the attested account
-            if attestation.account_id != self.env().caller() {
-                return Err(Error::NoPermission);
+            if self.env().caller() != self.admin {
+                return Err(Error::NotOwner);
             }
 
-            let username = attestation.username;
-            let account = attestation.account_id;
-            // TODO: add logic to prevent double redemptions
-            //
-            // Hint: both the username and the account are allowed to be used only ONCE
+            // Update chat id and bot id
+            self.chat_id = chat_id;
+            self.bot_id = bot_id;
 
-            self.redeem_by_account
-                .insert(&account, &self.total_redeemed);
-            self.total_redeemed += 1;
+            self.env().emit_event(AuctionBotUpdated { updated: true });
 
             Ok(())
         }
 
-        /// Returns my POAP redemption code / link if it exists. (View function)
+        /// Configure Auction Settings
         ///
-        /// - If the account doesn't have any redemption code allocated, it returns `None`;
-        /// - If the account has the code allocated but the contract doesn't have sufficient code
-        ///    in `poap_code`, it returns `None` as well;
-        /// - Otherwise it returns the code.
+        /// The admin must set the auction settings before deploying an auction
         #[ink(message)]
-        pub fn my_poap(&self) -> Option<String> {
-            let caller = self.env().caller();
-            let idx = match self.redeem_by_account.get(&caller) {
-                Some(idx) => idx,
-                None => return None,
-            };
-            self.poap_code.get(idx as usize).cloned()
+        pub fn admin_set_auction_settings(
+            &mut self,
+            token_id: String,
+            reserve_price: Balance,
+            bid_increment: u128,
+        ) -> Result<(), Error> {
+            // Hint: get the metadata about the contract through self.env()
+            if self.env().caller() != self.admin {
+                return Err(Error::NotOwner);
+            }
+
+            // Update auction configuration settings
+            self.token_id = token_id;
+            self.reserve_price = reserve_price.clone();
+            self.bid_increment = bid_increment;
+
+            self.env().emit_event(AuctionSettingsUpdated {
+                reserve_price,
+                bid_increment,
+            });
+
+            Ok(())
         }
 
-        #[ink(message)]
-        pub fn query_example(&self) -> (u16, Vec<u8>) {
-            let resposne = http_get!("https://example.com");
-            (resposne.status_code, resposne.body)
-        }
-
-        /// Attests a Github Gist by the raw file url. (Query only)
+        /// Create an auction
         ///
-        /// It sends a HTTPS request to the url and extract an address from the claim ("This gist
-        /// is owned by address: 0x..."). Once the claim is verified, it returns a signed
-        /// attestation with the pair `(github_username, account_id)`.
+        /// Only can be run by the admin and will interact with RMRK HTTP Endpoint to verify NFT information
         #[ink(message)]
-        pub fn attest_gist(&self, url: String) -> Result<SignedAttestation, Error> {
-            // Verify the URL
-            let gist_url = parse_gist_url(&url)?;
-            // Fetch the gist content
-            let resposne = http_get!(url);
-            if resposne.status_code != 200 {
-                return Err(Error::RequestFailed);
+        pub fn create_auction(&mut self, token_id: String) -> Result<(), Error> {
+            let sender = self.env().caller();
+            if sender != self.admin {
+                return Err(Error::NotOwner);
             }
-            let body = resposne.body;
-            // Verify the claim and extract the account id
-            let account_id = extract_claim(&body)?;
-            let attestation = Attestation {
-                username: gist_url.username,
-                account_id,
-            };
-            let result = self.sign_attestation(attestation);
-            Ok(result)
-        }
-
-        /// Signs the `attestation` with the attestation key pair.
-        pub fn sign_attestation(&self, attestation: Attestation) -> SignedAttestation {
-            let encoded = Encode::encode(&attestation);
-            let signature = sign!(&encoded, &self.attestation_privkey, SigType::Sr25519);
-            SignedAttestation {
-                attestation,
-                signature,
+            if token_id != self.token_id {
+                return Err(Error::TokenAuctionNotFound);
             }
-        }
-
-        /// Verifies the signed attestation and return the inner data.
-        pub fn verify_attestation(&self, signed: SignedAttestation) -> Result<Attestation, Error> {
-            let encoded = Encode::encode(&signed.attestation);
-            if !verify!(
-                &encoded,
-                &self.attestation_pubkey,
-                &signed.signature,
-                SigType::Sr25519
-            ) {
-                return Err(Error::InvalidSignature);
+            // Verify RMRK NFT ID
+            let api_url = "https://kanaria.rmrk.app/api/rmrk2/nft/".to_string();
+            let api_url = format!("{}{}", api_url, token_id);
+            let rmrk_nft: RmrkNft = self
+                ._verify_token_id(token_id.clone(), api_url)
+                .or(Err(Error::TokenValidationFailed))?;
+            let text = format!(
+                "***AUCTION ALERT***\nRMRK NFT ID: {}\nMetadata: {}\nImage URL: {}\nOwner: {}\n Reserve Price: {}\n",
+                rmrk_nft.id, rmrk_nft.metadata, rmrk_nft.image, rmrk_nft.rootowner, self.reserve_price
+            );
+            let encoded: Vec<u8> =
+                format!(r#"{{"chat_id":"{}","text":"{}"}}"#, self.chat_id, text).into_bytes();
+            let content_length = format!("{}", encoded.len());
+            let headers = vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Content-Length".into(), content_length),
+            ];
+            let tg_url = format!("https://api.telegram.org/bot{}/sendMessage", self.bot_id);
+            // Update Telegram Group
+            let response = http_post!(tg_url, encoded, headers);
+            if response.status_code != 200 {
+                return Err(Error::HttpResponseError);
             }
-            Ok(signed.attestation)
+
+            self.env().emit_event(AuctionCreated {
+                owner: sender,
+                token_id,
+            });
+
+            Ok(())
         }
-    }
 
-    #[derive(PartialEq, Eq, Debug)]
-    struct GistUrl {
-        username: String,
-        gist_id: String,
-        filename: String,
-    }
-
-    /// Parses a Github Gist url.
-    ///
-    /// - Returns a parsed [GistUrl] struct if the input is a valid url;
-    /// - Otherwise returns an [Error].
-    fn parse_gist_url(url: &str) -> Result<GistUrl, Error> {
-        let path = url
-            .strip_prefix("https://gist.githubusercontent.com/")
-            .ok_or(Error::InvalidUrl)?;
-        let components: Vec<_> = path.split('/').collect();
-        if components.len() < 5 {
-            return Err(Error::InvalidUrl);
+        /// Set the username for the auction
+        #[ink(message)]
+        pub fn set_username(&mut self, username: String) -> Result<(), Error> {
+            let sender = self.env().caller();
+            if self.username_by_account.get(&sender).is_some() {
+                return Err(Error::UsernameAlreadyInUse);
+            }
+            self.username_by_account.insert(&sender, &username);
+            Ok(())
         }
-        Ok(GistUrl {
-            username: components[0].to_string(),
-            gist_id: components[1].to_string(),
-            filename: components[4].to_string(),
-        })
-    }
 
-    const CLAIM_PREFIX: &str = "This gist is owned by address: 0x";
-    const ADDRESS_LEN: usize = 64;
+        /// Sender bids on an RMRK NFT Auction at the auto-increase bid
+        #[ink(message)]
+        pub fn send_auto_bid(&mut self, amount: u128) -> Result<(), Error> {
+            let sender = self.env().caller();
+            if self.admin == sender {
+                return Err(Error::OwnerCannotBidOnToken);
+            }
+            if self.reserve_price == amount && self.top_bidder == sender {
+                return Err(Error::AlreadyTopBid);
+            }
+            if self.reserve_price > amount {
+                return Err(Error::BidBelowReservePrice);
+            }
+            self.reserve_price = amount;
+            self.top_bidder = sender;
 
-    /// Extracts the ownerhip of the gist from a claim in the gist body.
-    ///
-    /// A valid claim must have the statement "This gist is owned by address: 0x..." in `body`. The
-    /// address must be the 256 bits public key of the Substrate account in hex.
-    ///
-    /// - Returns a 256-bit `AccountId` representing the owner account if the claim is valid;
-    /// - otherwise returns an [Error].
-    fn extract_claim(body: &[u8]) -> Result<AccountId, Error> {
-        let body = String::from_utf8_lossy(body);
-        let pos = body.find(CLAIM_PREFIX).ok_or(Error::NoClaimFound)?;
-        let addr: String = body
-            .chars()
-            .skip(pos)
-            .skip(CLAIM_PREFIX.len())
-            .take(ADDRESS_LEN)
-            .collect();
-        let addr = addr.as_bytes();
-        let account_id = decode_accountid_256(addr)?;
-        Ok(account_id)
-    }
+            self.env().emit_event(AuctionBid {
+                token_id: self.token_id.clone(),
+                amount: self.reserve_price,
+            });
 
-    /// Decodes a hex string as an 256-bit AccountId32
-    fn decode_accountid_256(addr: &[u8]) -> Result<AccountId, Error> {
-        use hex::FromHex;
-        if addr.len() != ADDRESS_LEN {
-            return Err(Error::InvalidAddressLength);
+            Ok(())
         }
-        let bytes = <[u8; 32]>::from_hex(addr).or(Err(Error::InvalidAddress))?;
-        Ok(AccountId::from(bytes))
-    }
 
-    #[derive(Encode, Decode, Debug)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub struct Attestation {
-        username: String,
-        account_id: AccountId,
-    }
+        #[ink(message)]
+        pub fn update_new_bid(&self) -> Result<(), Error> {
+            // Update TG channel
+            let text = format!(
+                "***NEW BID ALERT***\nRMRK NFT ID: {}\nNEW TOP BID: {} KSM\n",
+                self.token_id, self.reserve_price
+            );
+            let encoded: Vec<u8> =
+                format!(r#"{{"chat_id":"{}","text":"{}"}}"#, self.chat_id, text).into_bytes();
+            let content_length = format!("{}", encoded.len());
+            let headers = vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Content-Length".into(), content_length),
+            ];
+            let tg_url = format!("https://api.telegram.org/bot{}/sendMessage", self.bot_id);
+            // Update Telegram Group
+            let response = http_post!(tg_url, encoded, headers);
+            if response.status_code != 200 {
+                return Err(Error::HttpResponseError);
+            }
 
-    #[derive(Encode, Decode, Debug)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub struct SignedAttestation {
-        attestation: Attestation,
-        signature: Vec<u8>,
+            Ok(())
+        }
+
+        #[ink(message)]
+        pub fn settle_auction(&self) -> Result<(), Error> {
+            let sender = self.env().caller();
+            if sender != self.admin {
+                return Err(Error::NotOwner);
+            }
+            if sender == self.admin {
+                return Err(Error::NoWinner);
+            }
+            // Update TG channel
+            let text = format!(
+                "***AUCTION HAS BEEN SETTLED ALERT***\nRMRK NFT ID: {}\nWinning Bidder: {:?}\nWinning Bid: {} KSM",
+                self.token_id, self.top_bidder, self.reserve_price
+            );
+            let encoded: Vec<u8> =
+                format!(r#"{{"chat_id":"{}","text":"{}"}}"#, self.chat_id, text).into_bytes();
+            let content_length = format!("{}", encoded.len());
+            let headers = vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Content-Length".into(), content_length),
+            ];
+            let tg_url = format!("https://api.telegram.org/bot{}/sendMessage", self.bot_id);
+            // Update Telegram Group
+            let response = http_post!(tg_url, encoded, headers);
+            if response.status_code != 200 {
+                return Err(Error::HttpResponseError);
+            }
+
+            self.env().emit_event(AuctionSettled {
+                token_id: self.token_id.clone(),
+                winner: self.top_bidder,
+                amount: self.reserve_price,
+            });
+
+            Ok(())
+        }
+
+        // Internal functions
+        fn _verify_token_id(&self, token_id: String, api_url: String) -> Result<RmrkNft, Error> {
+            let response = http_get!(api_url);
+            if response.status_code != 200 {
+                return Err(Error::TokenValidationFailed);
+            }
+
+            let body = response.body;
+            let json_body = json!(body);
+            let rmrk_nft: RmrkNft =
+                serde_json::from_value(json_body).or(Err(Error::TokenValidationFailed))?;
+            // Verify the NFT
+            if token_id != rmrk_nft.id {
+                return Err(Error::TokenValidationFailed);
+            }
+
+            Ok(rmrk_nft)
+        }
     }
 
     /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
@@ -271,51 +343,7 @@ mod fat_sample {
         /// Imports `ink_lang` so we can use `#[ink::test]`.
         use ink_lang as ink;
 
-        #[ink::test]
-        fn can_parse_gist_url() {
-            let result = parse_gist_url("https://gist.githubusercontent.com/h4x3rotab/0cabeb528bdaf30e4cf741e26b714e04/raw/620f958fb92baba585a77c1854d68dc986803b4e/test%2520gist");
-            assert_eq!(
-                result,
-                Ok(GistUrl {
-                    username: "h4x3rotab".to_string(),
-                    gist_id: "0cabeb528bdaf30e4cf741e26b714e04".to_string(),
-                    filename: "test%2520gist".to_string(),
-                })
-            );
-            let err = parse_gist_url("http://example.com");
-            assert_eq!(err, Err(Error::InvalidUrl));
-        }
-
-        #[ink::test]
-        fn can_decode_claim() {
-            use hex::FromHex;
-
-            let ok = extract_claim(b"...This gist is owned by address: 0x0123456789012345678901234567890123456789012345678901234567890123...");
-            assert_eq!(
-                ok,
-                Ok(AccountId::from(
-                    <[u8; 32]>::from_hex(
-                        "0123456789012345678901234567890123456789012345678901234567890123"
-                    )
-                    .unwrap()
-                ))
-            );
-            // Bad cases
-            assert_eq!(
-                extract_claim(b"This gist is owned by"),
-                Err(Error::NoClaimFound),
-            );
-            assert_eq!(
-                extract_claim(b"This gist is owned by address: 0xAB"),
-                Err(Error::InvalidAddressLength),
-            );
-            assert_eq!(
-                extract_claim(b"This gist is owned by address: 0xXX23456789012345678901234567890123456789012345678901234567890123"),
-                Err(Error::InvalidAddress),
-            );
-        }
-
-        #[ink::test]
+        /*#[ink::test]
         fn admin_access_control() {
             use pink_extension::chain_extension::mock;
             // Mock derive key call (a pregenerated key pair)
@@ -332,10 +360,15 @@ mod fat_sample {
                 .expect("Cannot get accounts");
 
             // Construct a contract (deployed by `accounts.alice` by default)
-            let mut contract = FatSample::default();
+            let mut contract = PhatAuction::default();
 
             // Alice should be able to set the code
-            assert!(contract.admin_set_poap_code(vec!["1".to_string()]).is_ok());
+            assert!(contract
+                .admin_set_auction_bot(
+                    "-431421609".to_string(),
+                    "1728276198:AAHdrkLsn48tVXqsWBjJww3jQuZO5M1h_6o".to_string()
+                )
+                .is_ok());
 
             // Switch to Bob
             let callee = ink_env::account_id::<ink_env::DefaultEnvironment>();
@@ -348,7 +381,12 @@ mod fat_sample {
             );
 
             // Bob should not be able set the code
-            assert!(contract.admin_set_poap_code(vec!["1".to_string()]).is_err())
+            assert!(contract
+                .admin_set_auction_bot(
+                    "-431421609".to_string(),
+                    "1728276198:AAHdrkLsn48tVXqsWBjJww3jQuZO5M1h_6o".to_string()
+                )
+                .is_err())
         }
 
         #[ink::test]
@@ -370,7 +408,7 @@ mod fat_sample {
             let accounts = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                 .expect("Cannot get accounts");
             // Construct a contract (deployed by `accounts.alice` by default)
-            let mut contract = FatSample::default();
+            let mut contract = PhatAuction::default();
             assert_eq!(contract.admin, accounts.alice);
             // Admin (alice) can set POAP
             assert!(contract
@@ -403,6 +441,6 @@ mod fat_sample {
             assert_eq!(contract.redeem_by_account.get(accounts.alice), Some(0));
             // Check my redemption code
             assert_eq!(contract.my_poap(), Some("code0".to_string()))
-        }
+        }*/
     }
 }
