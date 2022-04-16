@@ -365,8 +365,8 @@ mod phat_auction {
             // Alice should be able to set the code
             assert!(contract
                 .admin_set_auction_bot(
-                    "-431421609".to_string(),
-                    "1728276198:AAHdrkLsn48tVXqsWBjJww3jQuZO5M1h_6o".to_string()
+                    "".to_string(),
+                    "".to_string()
                 )
                 .is_ok());
 
@@ -383,8 +383,8 @@ mod phat_auction {
             // Bob should not be able set the code
             assert!(contract
                 .admin_set_auction_bot(
-                    "-431421609".to_string(),
-                    "1728276198:AAHdrkLsn48tVXqsWBjJww3jQuZO5M1h_6o".to_string()
+                    "".to_string(),
+                    "".to_string()
                 )
                 .is_err())
         }
