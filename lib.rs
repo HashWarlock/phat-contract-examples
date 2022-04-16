@@ -36,8 +36,8 @@ mod phat_auction {
         token_id: String,
         /// Top bidder
         top_bidder: AccountId,
-        /// Map from verified accounts to usernames
-        username_by_account: Mapping<AccountId, String>,
+        /// Results from auctions
+        auction_results: Mapping<String, u128>,
         /// The minimum price accepted in an auction
         reserve_price: u128,
         /// The minimum percentage increase between bids
@@ -81,6 +81,11 @@ mod phat_auction {
         updated: bool,
     }
 
+    #[ink(event)]
+    pub struct SetNewOwner {
+        old_owner: AccountId,
+    }
+
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
@@ -97,7 +102,7 @@ mod phat_auction {
         TokenAuctionHasNotStarted,
         TokenAuctionInProgress,
         AlreadyTopBid,
-        UsernameAlreadyInUse,
+        TokenAuctionResultsAlreadySet,
         NoWinner,
     }
 
@@ -119,6 +124,19 @@ mod phat_auction {
                 contract.chat_id = Default::default();
                 contract.bot_id = Default::default();
             })
+        }
+
+        /// Set new owner of the contract
+        #[ink(message)]
+        pub fn set_owner(&mut self, new_owner: AccountId) -> Result<(), Error> {
+            let sender = self.env().caller();
+            if self.admin != sender {
+                return Err(Error::NotOwner);
+            }
+            self.admin = new_owner;
+            self.env().emit_event(SetNewOwner { old_owner: sender });
+
+            Ok(())
         }
 
         /// Configure Auction Bot
@@ -184,6 +202,9 @@ mod phat_auction {
             if token_id != self.token_id {
                 return Err(Error::TokenAuctionNotFound);
             }
+            if !self.settled {
+                return Err(Error::TokenAuctionInProgress);
+            }
             // Verify RMRK NFT ID
             let api_url = "https://kanaria.rmrk.app/api/rmrk2/nft/".to_string();
             let api_url = format!("{}{}", api_url, token_id);
@@ -216,23 +237,15 @@ mod phat_auction {
             Ok(())
         }
 
-        /// Set the username for the auction
-        #[ink(message)]
-        pub fn set_username(&mut self, username: String) -> Result<(), Error> {
-            let sender = self.env().caller();
-            if self.username_by_account.get(&sender).is_some() {
-                return Err(Error::UsernameAlreadyInUse);
-            }
-            self.username_by_account.insert(&sender, &username);
-            Ok(())
-        }
-
         /// Sender bids on an RMRK NFT Auction at the auto-increase bid
         #[ink(message)]
-        pub fn send_auto_bid(&mut self, amount: u128) -> Result<(), Error> {
+        pub fn send_bid(&mut self, amount: u128) -> Result<(), Error> {
             let sender = self.env().caller();
             if self.admin == sender {
                 return Err(Error::OwnerCannotBidOnToken);
+            }
+            if !self.settled {
+                return Err(Error::TokenAuctionInProgress);
             }
             if self.reserve_price == amount && self.top_bidder == sender {
                 return Err(Error::AlreadyTopBid);
@@ -276,7 +289,7 @@ mod phat_auction {
         }
 
         #[ink(message)]
-        pub fn settle_auction(&self) -> Result<(), Error> {
+        pub fn settle_auction(&mut self) -> Result<(), Error> {
             let sender = self.env().caller();
             if sender != self.admin {
                 return Err(Error::NotOwner);
@@ -284,6 +297,20 @@ mod phat_auction {
             if sender == self.admin {
                 return Err(Error::NoWinner);
             }
+            // Update contract state
+            self.settled = true;
+            self._set_results(self.token_id.clone(), self.reserve_price);
+
+            Ok(())
+        }
+
+        /// Update group of the results
+        #[ink(message)]
+        pub fn update_results(&self) -> Result<(), Error> {
+            if !self.settled {
+                return Err(Error::TokenAuctionInProgress);
+            }
+
             // Update TG channel
             let text = format!(
                 "***AUCTION HAS BEEN SETTLED ALERT***\nRMRK NFT ID: {}\nWinning Bidder: {:?}\nWinning Bid: {} KSM",
@@ -312,6 +339,18 @@ mod phat_auction {
             Ok(())
         }
 
+        /// Get the current top bid
+        #[ink(message)]
+        pub fn get_top_bid(&self) -> u128 {
+            self.reserve_price
+        }
+
+        /// Get Auction status
+        #[ink(message)]
+        pub fn get_auction_status(&self) -> bool {
+            self.settled
+        }
+
         // Internal functions
         fn _verify_token_id(&self, token_id: String, api_url: String) -> Result<RmrkNft, Error> {
             let response = http_get!(api_url);
@@ -329,6 +368,15 @@ mod phat_auction {
             }
 
             Ok(rmrk_nft)
+        }
+
+        fn _set_results(&mut self, token_id: String, amount: u128) -> Result<(), Error> {
+            let sender = self.env().caller();
+            if self.auction_results.get(&token_id).is_some() {
+                return Err(Error::TokenAuctionResultsAlreadySet);
+            }
+            self.auction_results.insert(&token_id, &amount);
+            Ok(())
         }
     }
 
@@ -387,60 +435,6 @@ mod phat_auction {
                     "".to_string()
                 )
                 .is_err())
-        }
-
-        #[ink::test]
-        fn end_to_end() {
-            use pink_extension::chain_extension::{mock, HttpResponse};
-
-            // Mock derive key call (a pregenerated key pair)
-            mock::mock_derive_sr25519_key(|_| {
-                hex::decode("78003ee90ff2544789399de83c60fa50b3b24ca86c7512d0680f64119207c80ab240b41344968b3e3a71a02c0e8b454658e00e9310f443935ecadbdd1674c683").unwrap()
-            });
-            mock::mock_get_public_key(|_| {
-                hex::decode("ce786c340288b79a951c68f87da821d6c69abd1899dff695bda95e03f9c0b012")
-                    .unwrap()
-            });
-            mock::mock_sign(|_| b"mock-signature".to_vec());
-            mock::mock_verify(|_| true);
-
-            // Test accounts
-            let accounts = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .expect("Cannot get accounts");
-            // Construct a contract (deployed by `accounts.alice` by default)
-            let mut contract = PhatAuction::default();
-            assert_eq!(contract.admin, accounts.alice);
-            // Admin (alice) can set POAP
-            assert!(contract
-                .admin_set_poap_code(vec!["code0".to_string(), "code1".to_string(),])
-                .is_ok());
-            // Generate an attestation
-            //
-            // Mock a http request first (the 256 bits account id is the pubkey of Alice)
-            mock::mock_http_request(|_| {
-                HttpResponse::ok(b"This gist is owned by address: 0x0101010101010101010101010101010101010101010101010101010101010101".to_vec())
-            });
-            let result = contract.attest_gist("https://gist.githubusercontent.com/h4x3rotab/0cabeb528bdaf30e4cf741e26b714e04/raw/620f958fb92baba585a77c1854d68dc986803b4e/test%2520gist".to_string());
-            assert!(result.is_ok());
-            let attestation = result.unwrap();
-            assert_eq!(attestation.attestation.username, "h4x3rotab");
-            assert_eq!(attestation.attestation.account_id, accounts.alice);
-            // Before redeem
-            assert_eq!(contract.my_poap(), None);
-            // Redeem
-            assert!(contract.redeem(attestation).is_ok());
-            assert_eq!(contract.total_redeemed, 1);
-            assert_eq!(
-                contract.account_by_username.get("h4x3rotab".to_string()),
-                Some(accounts.alice)
-            );
-            assert_eq!(
-                contract.username_by_account.get(&accounts.alice),
-                Some("h4x3rotab".to_string())
-            );
-            assert_eq!(contract.redeem_by_account.get(accounts.alice), Some(0));
-            // Check my redemption code
-            assert_eq!(contract.my_poap(), Some("code0".to_string()))
         }*/
     }
 }
