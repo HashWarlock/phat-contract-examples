@@ -181,6 +181,7 @@ mod phat_auction {
             self.token_id = token_id;
             self.reserve_price = reserve_price.clone();
             self.bid_increment = bid_increment;
+            self.settled = false;
 
             self.env().emit_event(AuctionSettingsUpdated {
                 reserve_price,
@@ -337,6 +338,12 @@ mod phat_auction {
             });
 
             Ok(())
+        }
+
+        /// Get the current top bid
+        #[ink(message)]
+        pub fn get_token_id(&self) -> String {
+            self.token_id.clone()
         }
 
         /// Get the current top bid
