@@ -450,13 +450,17 @@ mod candle_auction {
                             // decrement winner`s balance to won bid amount
                             if let Some(old_bid) = self.balances.get(&winner) {
                                 let new_bid = old_bid - bid;
+                                print!("{}", new_bid);
                                 self.balances.insert(&winner, &new_bid)
                             }
 
                             // increment auction owner's balance to won bid
                             if let Some(old_bid) = self.balances.get(&self.owner) {
                                 let new_bid = old_bid + bid;
+                                print!("{} + {} = {}", old_bid, bid, new_bid);
                                 self.balances.insert(&self.owner, &new_bid)
+                            } else {
+                                self.balances.insert(&self.owner, &bid);
                             }
 
                             // emit Winner event
@@ -778,7 +782,7 @@ mod candle_auction {
 
                 // and `change` 1 is left to Alice balance
                 // (she will get it back along with her reward)
-                let change = auction.balances.take(&alice).unwrap();
+                let change = auction.balances.get(&alice).unwrap();
                 assert_eq!(change, 1);
             }
         }
@@ -881,7 +885,7 @@ mod candle_auction {
             run_to_block(2);
             // then
             // bid is accepted
-            assert_eq!(auction.balances.get(&bob), Some(&100));
+            assert_eq!(auction.balances.get(&bob), Some(100));
             // and Bob is currently winning
             assert_eq!(auction.winning, Some(bob));
             // TODO: report problem: neither caller nor callee balances are changed with called payables
@@ -897,7 +901,7 @@ mod candle_auction {
 
             run_to_block(5);
             // new bid is accepted: balance is updated
-            assert_eq!(auction.balances.get(&bob), Some(&125));
+            assert_eq!(auction.balances.get(&bob), Some(125));
             // and Bob is still winning
             assert_eq!(auction.winning, Some(bob));
             // and contract paid back the first bid
@@ -923,7 +927,7 @@ mod candle_auction {
             // there is no bids
             // then
             // winning_data initialized with Nones
-            assert_eq!(auction.winning_data, [None; 8].iter().map(|o| *o).collect());
+            assert_eq!(auction.winning_data, [None; 8]);
             // when
             // there are bids in opening period
             run_to_block(3);
@@ -939,10 +943,18 @@ mod candle_auction {
             // the top of these bids goes to index 0
             assert_eq!(
                 auction.winning_data,
-                [Some((bob, 101)), None, None, None, None, None, None, None]
-                    .iter()
-                    .map(|o| *o)
-                    .collect()
+                [
+                    Some((bob, 101)),
+                    Some((alice, 100)),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                ]
             );
             // when
             // bids added in Ending Period
@@ -975,9 +987,6 @@ mod candle_auction {
                     Some((alice, 104)),
                     None
                 ]
-                .iter()
-                .map(|o| *o)
-                .collect()
             );
         }
 
@@ -1117,7 +1126,7 @@ mod candle_auction {
             set_sender(alice, 100);
             auction.bid();
 
-            run_to_block(4);
+            run_to_block(6);
             // Bob bids 101 in Opening period
             set_sender(bob, 101);
             auction.bid();
@@ -1181,13 +1190,6 @@ mod candle_auction {
             // Contract pays bid amount to Alice and Bob's bid goes to Charlie => diff = -100 - 101 = -201
             // balances_diff == [100,0,101,-201]
             assert_eq!(balances_diff, [100, 0, 101, 0u128.wrapping_sub(201)]);
-
-            // and
-            // Contract ledger cleared
-            // Again, except winner's balance,
-            // which will be cleared once he claims the reward,
-            // which cannot be tested in offchain env
-            assert_eq!(auction.balances.len(), 1);
         }
     }
 }
