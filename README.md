@@ -1,6 +1,6 @@
 # Fat Contract Workshop
 
-This is a workshop demonstrating how to write a *Fat Contract* with its HTTP request capability on Phala.
+This workshop will demonstrate how to create a game of Roshambo (Rock, Paper, Scissors) in a Fat Contract.
 
 ## Introduction
 
@@ -18,21 +18,7 @@ Fat Contract is 100% compatible with Substrate's `pallet-contracts`. It fully su
 
 ## About this workshop
 
-This workshop will demonstrate how to use Fat Contract's HTTP request capability to associate a Phala account with a Github user. Such functionality serves as the core for [Decentralized Identity (DID)](https://www.gsma.com/identity/decentralised-identity). Further, we will show how to deploy your contract in [Phala Testnet](https://polkadot.js.org/apps/?rpc=wss%3A%2F%2Fpoc5.phala.network%2Fws#/explorer) and interact with it through our [frontend SDK](https://github.com/Phala-Network/js-sdk).
-
-The Fat Contract "Redeem POAP" links on-chain accounts to Github accounts and then distributes POAP redeem code to the verified users. The simple protocol is listed below:
-
-1. The user should create a Github Gist with a special format with the account id: "This gist is owned by address: 0x01234...."
-2. The user submits the raw file URL to the Fat Contract by a _query_ ("https://gist.githubusercontent.com/[username]/[gist-id]/raw/...")
-3. The contract then
-    - Verifies the URL is valid
-    - Fetches the content of the URL (by Fat Contract's HTTP in Query feature)
-    - Verifies the account claim in the gist is valid
-    - Extracts the Github username from the URL and the account id from the claim
-    - Produces an `Attestation` struct with the Github username and the account id, and signs it with a contract-owned key (by Fat Contract's confidentiality and cryptographic feature)
-4. The user receives the `SignedAttestation`, and then submit the attestation to the contract by a `redeem` _command_
-5. The contract verifies the attestation, and then links the Github username and the account id
-6. If the user didn't claim any POAP, it reveals a POAP code to the user after the verification
+This workshop will demonstrate how to create a game of Roshambo (Rock, Paper, Scissors) in a Fat Contract.
 
 ## Environment Preparation
 
@@ -89,23 +75,6 @@ $ yarn --version
     ![](https://i.imgur.com/l3I14ri.png)
 
 ## **[Deprecated]** Play with our deployed version
-
-> The official contract has been removed after Testnet update. You can deploy your own version and interact with it.
-
-- Frontend: https://phala-js-sdk-example.netlify.app/
-![](https://i.imgur.com/h761Y6C.png)
-    1. Connect your wallet;
-    2. Load the deployed contract;
-        - Substrate endpoint: `wss://poc5.phala.network/ws`
-        - Secure Worker endpoints: `https://poc5.phala.network/tee-api-{n}` (n = 1 to 5)
-        - Contract ID: `0x6cad353bad2232931ae7878b2013439bfca2576cd0c0d2c72093dc4c63c68568`
-        - ABI: copy from `metadata.json` ([prebuilt copy](https://gist.githubusercontent.com/h4x3rotab/4a55b7c6ac9ad50f2f803a1edc93456e/raw/12e0b2d8afacba2fb8de664744fb64c6ed507290/metadata.json))
-    3. Click `Sign a Certificate`, this will generate a certificate to encrypt your traffic to/from the contract;
-    4. Follow the instruction, copy the contents and create a *public* Github Gist with it;
-    5. Open the **RAW** file, and copy the link;
-    ![](https://i.imgur.com/YqgesNm.png)
-    6. Paste the link to the box and click `Verify`;
-    7. The redeem code box in will refresh every 5s. It should show your code once the verification is successful.
 
 ## Compile the contract
 
@@ -198,19 +167,6 @@ Follow the steps to run the frontend
     ```
 
 You shall see the identical page as we have [deployed](#play-with-our-deployed-version).
-
-> ### Attention
-> By default, the `poap_code` pool is empty, so the users can only get empty string even if they have passed the verification. The contract admin need to invoke the `admin_set_poap_code()` first to fill in the redeem code pool so the users can really get something.
-
-## Challenge: Fill in the missing code
-
-We leave two challenges (labeled by `TODO`) for you to explore.
-- The first is about adding the necessary access control to the update redeem code function, you will learn about how to access the contract metadata through the `self.env()` function;
-- The second is about check to prevent a double redemption of the code.
-
-### Solution
-
-Please check the `ethdenver-2022-solution` branch.
 
 ## Appendix
 
