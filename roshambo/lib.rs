@@ -28,6 +28,7 @@ mod roshambo {
         AlreadyChoseMove,
         BothPlayersChoseAMove,
         NoPermissions,
+        NoChallengerExists,
     }
 
     /// Auction statuses
@@ -100,7 +101,7 @@ mod roshambo {
     #[ink(event)]
     pub struct GameSettled {
         game_id: u32,
-        winner: AccountId,
+        winner: Option<AccountId>,
     }
 
     /// Defines the storage of the contract.
@@ -109,6 +110,10 @@ mod roshambo {
     pub struct Roshambo {
         /// Roshambo game owner
         hand_czar: AccountId,
+        /// Hand Czar Wins
+        hand_czar_wins: u32,
+        /// Hand Czar Losses
+        hand_czar_losses: u32,
         /// Game ID
         game_id: u32,
         /// Challenger
@@ -128,14 +133,14 @@ mod roshambo {
         /// Initializes the start_block to next block (if not set).  
         /// If start_block is set, checks it is in the future (to prevent backdating).  
         #[ink(constructor)]
-        pub fn new() -> Self {
-            let now = Self::env().block_number();
-            let start_in = now + 1;
+        pub fn default() -> Self {
             // This call is required in order to correctly initialize the
             // `Mapping`s of our contract.
             ink_lang::codegen::initialize_contract(|contract: &mut Self| {
                 contract.hand_czar = Self::env().caller();
                 contract.game_id = 0;
+                contract.hand_czar_wins = 0;
+                contract.hand_czar_losses = 0;
                 contract.challenger = None;
                 contract.hand_czar_move = 0;
                 contract.challenger_move = 0;
@@ -193,11 +198,19 @@ mod roshambo {
                     return Err(Error::BothPlayersChoseAMove);
                 }
                 let winner: Option<AccountId> = None;
-                self.challenger = None;
-                self.hand_czar_move = 0;
-                self.challenger_move = 0;
-                self.game_settled = true;
-                self.game_results.insert(&self.game_id, &winner);
+                if let Some(old_challenger) = self.challenger.clone() {
+                    self.challenger = None;
+                    self.hand_czar_move = 0;
+                    self.challenger_move = 0;
+                    self.game_settled = true;
+                    self.game_results.insert(&self.game_id, &winner);
+                    self.env().emit_event(PlayerBooted {
+                        game_id: self.game_id,
+                        challenger: old_challenger,
+                    });
+                } else {
+                    return Err(Error::NoChallengerExists);
+                }
             } else {
                 return Err(Error::NoPermissions);
             }
@@ -215,6 +228,10 @@ mod roshambo {
                     self.challenger_move = 0;
                     self.game_settled = true;
                     self.game_results.insert(&self.game_id, &winner);
+                    self.env().emit_event(GameSettled {
+                        game_id: self.game_id,
+                        winner,
+                    });
                 } else {
                     return Err(Error::GameInProgress);
                 }
@@ -230,26 +247,56 @@ mod roshambo {
             self.game_results.get(&game_id).unwrap_or(None)
         }
 
+        /// Get Hand Czar Wins
+        #[ink(message)]
+        pub fn get_hand_czar_wins(&self) -> u32 {
+            self.hand_czar_wins
+        }
+
+        /// Get Hand Czar Losses
+        #[ink(message)]
+        pub fn get_hand_czar_losses(&self) -> u32 {
+            self.hand_czar_losses
+        }
+
         /// Determine winner
-        fn determine_winner(&self) -> Option<AccountId> {
+        fn determine_winner(&mut self) -> Option<AccountId> {
             let hand_czar_move = Move::from_u8(self.hand_czar_move);
             let challenger_move = Move::from_u8(self.challenger_move);
             match hand_czar_move {
                 Move::Rock => match challenger_move {
                     Move::Rock => None,
-                    Move::Paper => self.challenger,
-                    Move::Scissors => Some(self.hand_czar),
+                    Move::Paper => {
+                        self.hand_czar_losses += 1;
+                        self.challenger
+                    }
+                    Move::Scissors => {
+                        self.hand_czar_wins += 1;
+                        Some(self.hand_czar)
+                    }
                     _ => None,
                 },
                 Move::Paper => match challenger_move {
-                    Move::Rock => Some(self.hand_czar),
+                    Move::Rock => {
+                        self.hand_czar_wins += 1;
+                        Some(self.hand_czar)
+                    }
                     Move::Paper => None,
-                    Move::Scissors => self.challenger,
+                    Move::Scissors => {
+                        self.hand_czar_losses += 1;
+                        self.challenger
+                    }
                     _ => None,
                 },
                 Move::Scissors => match challenger_move {
-                    Move::Rock => self.challenger,
-                    Move::Paper => Some(self.hand_czar),
+                    Move::Rock => {
+                        self.hand_czar_losses += 1;
+                        self.challenger
+                    }
+                    Move::Paper => {
+                        self.hand_czar_wins += 1;
+                        Some(self.hand_czar)
+                    }
                     Move::Scissors => None,
                     _ => None,
                 },
@@ -297,7 +344,7 @@ mod roshambo {
             mock::mock_verify(|_| true);
 
             // Construct contract
-            let mut contract = Roshambo::new();
+            let mut contract = Roshambo::default();
             assert_eq!(contract.hand_czar, accounts.alice);
             let alice = accounts.alice;
             let bob = accounts.bob;
