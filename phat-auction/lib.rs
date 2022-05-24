@@ -15,15 +15,19 @@ mod phat_auction {
     use ink_storage::{traits::SpreadAllocate, Mapping};
     use pink::{http_get, http_post, PinkEnvironment};
     use scale::{Decode, Encode};
-    use serde::Deserialize;
-    use serde_json::json;
+    use serde::{Deserialize, Deserializer};
+    use serde_json_core::from_slice;
 
     /// RMRK NFT structure
-    #[derive(Deserialize, Debug, Eq, PartialEq)]
+    #[derive(Deserialize, Default, Debug)]
     pub struct RmrkNft {
+        #[serde(skip)]
         id: String,
+        #[serde(skip)]
         metadata: String,
+        #[serde(skip)]
         image: String,
+        #[serde(skip)]
         rootowner: String,
     }
 
@@ -366,9 +370,9 @@ mod phat_auction {
             }
 
             let body = response.body;
-            let json_body = json!(body);
-            let rmrk_nft: RmrkNft =
-                serde_json::from_value(json_body).or(Err(Error::TokenValidationFailed))?;
+            let json_body: (RmrkNft, _) = from_slice(&body).expect("Should be okay");
+
+            let rmrk_nft = json_body.0;
             // Verify the NFT
             if token_id != rmrk_nft.id {
                 return Err(Error::TokenValidationFailed);
