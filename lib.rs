@@ -186,7 +186,7 @@ mod roshambo {
                 });
                 Ok(())
             } else {
-                return Err(Error::NoPermissions);
+                Err(Error::NoPermissions)
             }
         }
 
@@ -257,6 +257,30 @@ mod roshambo {
         #[ink(message)]
         pub fn get_hand_czar_losses(&self) -> u32 {
             self.hand_czar_losses
+        }
+
+        /// Check if game is settled
+        #[ink(message)]
+        pub fn is_game_settled(&self) -> bool {
+            self.game_settled
+        }
+
+        /// Get current game id
+        #[ink(message)]
+        pub fn get_game_id(&self) -> u32 {
+            self.game_id
+        }
+
+        /// Check if Challenger has moved
+        #[ink(message)]
+        pub fn get_challenger_move_status(&self) -> bool {
+            self.challenger_move > 0
+        }
+
+        /// Check if Hand Czar has moved
+        #[ink(message)]
+        pub fn get_hand_czar_move_status(&self) -> bool {
+            self.hand_czar_move > 0
         }
 
         /// Determine winner
@@ -355,6 +379,10 @@ mod roshambo {
             set_sender(alice, 100);
             contract.settle_game();
             assert_eq!(contract.results(1), Some(bob));
+            let czar_wins = contract.get_hand_czar_wins();
+            let czar_losses = contract.get_hand_czar_losses();
+            assert_eq!((czar_wins, czar_losses), (0, 1));
+            assert_eq!(contract.challenger, None);
         }
     }
 }
