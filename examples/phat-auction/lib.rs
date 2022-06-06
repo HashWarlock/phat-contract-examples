@@ -1,5 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
+extern crate core;
 
 use pink_extension as pink;
 
@@ -15,20 +16,15 @@ mod phat_auction {
     use ink_storage::{traits::SpreadAllocate, Mapping};
     use pink::{http_get, http_post, PinkEnvironment};
     use scale::{Decode, Encode};
-    use serde::{Deserialize, Deserializer};
+    use serde::{Deserialize, Serialize};
     use serde_json_core::from_slice;
 
     /// RMRK NFT structure
-    #[derive(Deserialize, Default, Debug)]
-    pub struct RmrkNft {
-        #[serde(skip)]
-        id: String,
-        #[serde(skip)]
-        metadata: String,
-        #[serde(skip)]
-        image: String,
-        #[serde(skip)]
-        rootowner: String,
+    #[derive(Deserialize, Serialize, Default, Debug, PartialEq)]
+    pub struct RmrkNft<'a> {
+        id: &'a str,
+        metadata: &'a str,
+        owner: &'a str,
     }
 
     #[ink(storage)]
@@ -213,12 +209,25 @@ mod phat_auction {
             // Verify RMRK NFT ID
             let api_url = "https://kanaria.rmrk.app/api/rmrk2/nft/".to_string();
             let api_url = format!("{}{}", api_url, token_id);
-            let rmrk_nft: RmrkNft = self
-                ._verify_token_id(token_id.clone(), api_url)
-                .or(Err(Error::TokenValidationFailed))?;
+            let response = http_get!(api_url);
+            if response.status_code != 200 {
+                return Err(Error::TokenValidationFailed);
+            }
+            let body = response.body;
+            let rmrk_nft = from_slice::<RmrkNft>(&body)
+                .or(Err(Error::TokenValidationFailed))?
+                .0;
+
+            // Verify the NFT
+            if token_id != rmrk_nft.id {
+                return Err(Error::TokenValidationFailed);
+            }
+            // let rmrk_nft: RmrkNft = self
+            //     ._verify_token_id(token_id.clone(), response.body)
+            //     .or(Err(Error::TokenValidationFailed))?;
             let text = format!(
-                "***AUCTION ALERT***\nRMRK NFT ID: {}\nMetadata: {}\nImage URL: {}\nOwner: {}\n Reserve Price: {}\n",
-                rmrk_nft.id, rmrk_nft.metadata, rmrk_nft.image, rmrk_nft.rootowner, self.reserve_price
+                "***AUCTION ALERT***\nRMRK NFT ID: {}\nMetadata: {}\nOwner: {}\n Reserve Price: {}\n",
+                rmrk_nft.id, rmrk_nft.metadata, rmrk_nft.owner, self.reserve_price
             );
             let encoded: Vec<u8> =
                 format!(r#"{{"chat_id":"{}","text":"{}"}}"#, self.chat_id, text).into_bytes();
@@ -362,25 +371,6 @@ mod phat_auction {
             self.settled
         }
 
-        // Internal functions
-        fn _verify_token_id(&self, token_id: String, api_url: String) -> Result<RmrkNft, Error> {
-            let response = http_get!(api_url);
-            if response.status_code != 200 {
-                return Err(Error::TokenValidationFailed);
-            }
-
-            let body = response.body;
-            let json_body: (RmrkNft, _) = from_slice(&body).expect("Should be okay");
-
-            let rmrk_nft = json_body.0;
-            // Verify the NFT
-            if token_id != rmrk_nft.id {
-                return Err(Error::TokenValidationFailed);
-            }
-
-            Ok(rmrk_nft)
-        }
-
         fn _set_results(&mut self, token_id: String, amount: u128) -> Result<(), Error> {
             let sender = self.env().caller();
             if self.auction_results.get(&token_id).is_some() {
@@ -388,6 +378,57 @@ mod phat_auction {
             }
             self.auction_results.insert(&token_id, &amount);
             Ok(())
+        }
+    }
+
+    // Internal functions
+    pub fn verify_token_id<'a>(token_id: &'a str, response: &'a str) -> Result<RmrkNft<'a>, Error> {
+        let json_body: (RmrkNft, _) =
+            from_slice(response.as_bytes()).or(Err(Error::TokenValidationFailed))?;
+
+        let rmrk_nft = json_body.0;
+        // Verify the NFT
+        if token_id != rmrk_nft.id {
+            return Err(Error::TokenValidationFailed);
+        }
+
+        Ok(rmrk_nft)
+    }
+
+    /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
+    /// module and test functions are marked with a `#[test]` attribute.
+    /// The below code is technically just normal Rust code.
+    #[cfg(test)]
+    mod tests {
+        /// Imports all the definitions from the outer scope so we can use them here.
+        use super::*;
+
+        /// Imports `ink_lang` so we can use `#[ink::test]`.
+        use ink_lang as ink;
+
+        #[ink::test]
+        fn can_parse_rmrk_http_request() {
+            let json_response = r#"{
+                "id":"11683527-74494d37fc53428637-NFKUSAMA-1_NFK-00000021","block":11683527,"metadata":"ipfs://ipfs/bafkreicm4ax23grhlgnxkcp2vsk7hxj33rjrfixcfagdtj4nnl4x6ew7oq","metadata_name":"1 NFK","metadata_description":"Probably nothing.","symbol":"1_NFK","sn":"00000021","forsale":986100000000,"owner":"FCnr7PuaFuP6ZfUeo8N2Qu4ox1Ax9fE7MaSaTVU8PPum6Ax","priority":["11683527_6AUXbikO"],"collectionId":"74494d37fc53428637-NFKUSAMA","resources":[{"src":"ipfs://ipfs/bafybeieogrpywsomypnaqpfkv6zzstjfxyj4r5hwzzdbmndl3hxzuhzunu","id":"11683527_6AUXbikO","resources_parts":[]}],"children":[]
+            }"#;
+            let result = verify_token_id(
+                "11683527-74494d37fc53428637-NFKUSAMA-1_NFK-00000021",
+                json_response,
+            );
+            assert_eq!(
+                result,
+                Ok(RmrkNft {
+                    id: "11683527-74494d37fc53428637-NFKUSAMA-1_NFK-00000021",
+                    metadata:
+                        "ipfs://ipfs/bafkreicm4ax23grhlgnxkcp2vsk7hxj33rjrfixcfagdtj4nnl4x6ew7oq",
+                    owner: "FCnr7PuaFuP6ZfUeo8N2Qu4ox1Ax9fE7MaSaTVU8PPum6Ax",
+                })
+            );
+            let err = verify_token_id(
+                "11683527-74494d37fc53428637-NFKUSAMA-1_NFK-00000021",
+                r#"{"id": "none"}"#,
+            );
+            assert_eq!(err, Err(Error::TokenValidationFailed));
         }
     }
 }
