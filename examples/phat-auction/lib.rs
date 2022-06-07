@@ -1,6 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
-extern crate core;
 
 use pink_extension as pink;
 
@@ -14,13 +13,16 @@ mod phat_auction {
         vec::Vec,
     };
     use ink_storage::{traits::SpreadAllocate, Mapping};
-    use pink::{http_get, http_post, PinkEnvironment};
+    use pink::{
+        chain_extension::SigType, derive_sr25519_key, get_public_key, http_get, http_post, sign,
+        verify, PinkEnvironment,
+    };
     use scale::{Decode, Encode};
     use serde::{Deserialize, Serialize};
     use serde_json_core::from_slice;
 
     /// RMRK NFT structure
-    #[derive(Deserialize, Serialize, Default, Debug, PartialEq)]
+    #[derive(Deserialize, Serialize, Clone, Default, Debug, PartialEq)]
     pub struct RmrkNft<'a> {
         id: &'a str,
         metadata: &'a str,
@@ -203,8 +205,8 @@ mod phat_auction {
             if token_id != self.token_id {
                 return Err(Error::TokenAuctionNotFound);
             }
-            if !self.settled {
-                return Err(Error::TokenAuctionInProgress);
+            if self.settled {
+                return Err(Error::TokenAuctionHasNotStarted);
             }
             // Verify RMRK NFT ID
             let api_url = "https://kanaria.rmrk.app/api/rmrk2/nft/".to_string();
@@ -214,9 +216,9 @@ mod phat_auction {
                 return Err(Error::TokenValidationFailed);
             }
             let body = response.body;
-            let rmrk_nft = from_slice::<RmrkNft>(&body)
-                .or(Err(Error::TokenValidationFailed))?
-                .0;
+            let rmrk_nft_vec: Vec<RmrkNft> =
+                from_slice(&body).or(Err(Error::TokenValidationFailed))?.0;
+            let rmrk_nft = rmrk_nft_vec[0].clone();
 
             // Verify the NFT
             if token_id != rmrk_nft.id {
@@ -383,10 +385,13 @@ mod phat_auction {
 
     // Internal functions
     pub fn verify_token_id<'a>(token_id: &'a str, response: &'a str) -> Result<RmrkNft<'a>, Error> {
-        let json_body: (RmrkNft, _) =
+        let json_body: (Vec<RmrkNft>, _) =
             from_slice(response.as_bytes()).or(Err(Error::TokenValidationFailed))?;
 
-        let rmrk_nft = json_body.0;
+        let rmrk_vec: Vec<RmrkNft> = json_body.0;
+        println!("{:?}", rmrk_vec);
+        let rmrk_nft = rmrk_vec[0].clone();
+        println!("{:?}", rmrk_nft);
         // Verify the NFT
         if token_id != rmrk_nft.id {
             return Err(Error::TokenValidationFailed);
@@ -403,14 +408,61 @@ mod phat_auction {
         /// Imports all the definitions from the outer scope so we can use them here.
         use super::*;
 
+        use ink_env::test::set_caller;
         /// Imports `ink_lang` so we can use `#[ink::test]`.
         use ink_lang as ink;
 
         #[ink::test]
-        fn can_parse_rmrk_http_request() {
-            let json_response = r#"{
+        fn end_to_end() {
+            use pink_extension::chain_extension::{mock, HttpResponse};
+            // Mock derive key call (a pregenerated key pair)
+            mock::mock_derive_sr25519_key(|_| {
+                hex::decode("78003ee90ff2544789399de83c60fa50b3b24ca86c7512d0680f64119207c80ab240b41344968b3e3a71a02c0e8b454658e00e9310f443935ecadbdd1674c683").unwrap()
+            });
+            mock::mock_get_public_key(|_| {
+                hex::decode("ce786c340288b79a951c68f87da821d6c69abd1899dff695bda95e03f9c0b012")
+                    .unwrap()
+            });
+
+            // Test accounts
+            let accounts = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>();
+            mock::mock_sign(|_| b"mock-signature".to_vec());
+            mock::mock_verify(|_| true);
+
+            // Construct contract
+            let mut contract = PhatAuction::default();
+            assert_eq!(contract.admin, accounts.alice);
+            let alice = accounts.alice;
+            let bob = accounts.bob;
+            let charlie = accounts.charlie;
+            // Set Auction Bot
+            let chat_id = "001".to_string();
+            let bot_id = "002".to_string();
+            contract.admin_set_auction_bot(chat_id.clone(), bot_id.clone());
+            assert_eq!(contract.chat_id, chat_id);
+            assert_eq!(contract.bot_id, bot_id);
+            // Set Auction
+            let nft_id = "11683527-74494d37fc53428637-NFKUSAMA-1_NFK-00000021".to_string();
+            let reserve_price: Balance = 1u128.into();
+            let bid_increment = 1;
+            contract.admin_set_auction_settings(nft_id.clone(), reserve_price, bid_increment);
+            assert_eq!(contract.token_id, nft_id);
+            assert_eq!(contract.reserve_price, 1);
+            assert_eq!(contract.bid_increment, 1);
+            let json_response = r#"[{
                 "id":"11683527-74494d37fc53428637-NFKUSAMA-1_NFK-00000021","block":11683527,"metadata":"ipfs://ipfs/bafkreicm4ax23grhlgnxkcp2vsk7hxj33rjrfixcfagdtj4nnl4x6ew7oq","metadata_name":"1 NFK","metadata_description":"Probably nothing.","symbol":"1_NFK","sn":"00000021","forsale":986100000000,"owner":"FCnr7PuaFuP6ZfUeo8N2Qu4ox1Ax9fE7MaSaTVU8PPum6Ax","priority":["11683527_6AUXbikO"],"collectionId":"74494d37fc53428637-NFKUSAMA","resources":[{"src":"ipfs://ipfs/bafybeieogrpywsomypnaqpfkv6zzstjfxyj4r5hwzzdbmndl3hxzuhzunu","id":"11683527_6AUXbikO","resources_parts":[]}],"children":[]
-            }"#;
+            }]"#;
+            mock::mock_http_request(|_| HttpResponse::ok(json_response.into()));
+            let result = contract.create_auction(nft_id);
+            assert_eq!(result, Ok(()));
+            set_caller::<ink_env::DefaultEnvironment>(bob);
+        }
+
+        #[ink::test]
+        fn can_parse_rmrk_http_request() {
+            let json_response = r#"[{
+                "id":"11683527-74494d37fc53428637-NFKUSAMA-1_NFK-00000021","block":11683527,"metadata":"ipfs://ipfs/bafkreicm4ax23grhlgnxkcp2vsk7hxj33rjrfixcfagdtj4nnl4x6ew7oq","metadata_name":"1 NFK","metadata_description":"Probably nothing.","symbol":"1_NFK","sn":"00000021","forsale":986100000000,"owner":"FCnr7PuaFuP6ZfUeo8N2Qu4ox1Ax9fE7MaSaTVU8PPum6Ax","priority":["11683527_6AUXbikO"],"collectionId":"74494d37fc53428637-NFKUSAMA","resources":[{"src":"ipfs://ipfs/bafybeieogrpywsomypnaqpfkv6zzstjfxyj4r5hwzzdbmndl3hxzuhzunu","id":"11683527_6AUXbikO","resources_parts":[]}],"children":[]
+            }]"#;
             let result = verify_token_id(
                 "11683527-74494d37fc53428637-NFKUSAMA-1_NFK-00000021",
                 json_response,
