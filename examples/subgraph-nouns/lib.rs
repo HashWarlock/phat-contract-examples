@@ -27,14 +27,14 @@ mod nouns_subgraph {
         current_bid: u128,
         acceptable_price: u128,
         nouns_endpoint: String,
+        nouns_post_data: String,
     }
 
     #[derive(Encode, Decode, Debug)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub struct NounsInfo {
         id: u32,
-        endTime: String,
-        bids: Vec<u128>,
+        amount: u128,
         settled: AccountId,
     }
 
@@ -50,7 +50,10 @@ mod nouns_subgraph {
     pub enum Error {
         InvalidBody,
         InvalidUrl,
+        InvalidSignature,
         RequestFailed,
+        AuctionAlreadySettled,
+        MustGetLatestNounInfo,
         NoPermissions,
     }
 
@@ -64,6 +67,15 @@ mod nouns_subgraph {
             let admin = Self::env().caller();
             let nouns_endpoint =
                 "https://api.thegraph.com/subgraphs/name/nounsdao/nouns-subgraph".to_string();
+            let nouns_post_data = r#"{
+                "query":"query MyQuery{
+                    auctions(orderBy: endTime, orderDirection: desc, first: 1) {
+                        id
+                        amount
+                        settled
+                    }
+                }","variables":null,"operationalName":"MyQuery"
+            }"#;
             Self {
                 admin,
                 attestation_privkey: privkey,
@@ -72,21 +84,70 @@ mod nouns_subgraph {
                 current_bid: 0,
                 acceptable_price: 0,
                 nouns_endpoint,
+                nouns_post_data,
             }
         }
 
+        /// Set the acceptable price that the admin is comfortable bidding for a Noun.
         #[ink(message)]
-        pub fn set_current_bid(&mut self, amount: u128) -> Result<(), Error> {
-            let caller = self.env().caller();
-            if caller != self.admin {
+        pub fn set_acceptable_price(&mut self, acceptable_price: u128) -> Result<(), Error> {
+            if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            // Update the code
-            self.current_bid = amount;
+            self.acceptable_price = acceptable_price;
             Ok(())
         }
-        /// Signs the `attestation` with the attestation key pair.
-        fn sign_nouns_info(&self, nouns_info: NounsInfo) -> SignedNounsInfo {
+
+        /// Set the last time admin queried for the latest Nouns bid price.
+        #[ink(message)]
+        pub fn set_nouns_info(&mut self, signed_nouns_info: SignedNounsInfo) -> Result<(), Error> {
+            // Verify the Nouns Info
+            let nouns_info = self.verify_nouns_info(signed_nouns_info)?;
+            let nouns_id = nouns_info.id;
+            let current_bid = nouns_info.amount;
+            let settled = nouns_info.settled;
+            // If auction is settled then we cannot purchase the noun
+            if settled {
+                return Err(Error::AuctionAlreadySettled);
+            }
+
+            self.nouns_id = nouns_id;
+            self.current_bid = current_bid;
+
+            Ok(())
+        }
+
+        /// Check if the current bid price is affordable
+        #[ink(message)]
+        pub fn is_noun_affordable(&self) -> Result<bool, Error> {
+            if self.current_bid == 0 {
+                return Err(Error::MustGetLatestNounInfo);
+            }
+            if self.current_bid < self.acceptable_price {
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+
+        /// Get the latest bid price on the current Noun up for auction. Sign the info & return the result.
+        #[ink(message)]
+        pub fn get_latest_nouns_info(&self) -> Result<SignedNounsInfo, Error> {
+            // Get the latest nouns info through http_post
+            let response = http_post!(self.nouns_endpoint, self.nouns_post_data)?;
+            if response.status_code != 200 {
+                return Err(Error::RequestFailed);
+            }
+            let body = response.body;
+            // Extract Nouns Info
+            let (nouns_info, _): (NounsInfo, usize) =
+                serde_json_core::from_slice(body).or(Err(Error::InvalidBody))?;
+            let result = self.sign_nouns_info(nouns_info);
+            Ok(result)
+        }
+
+        /// Signs the `nouns_info` with the attestation key pair.
+        pub fn sign_nouns_info(&self, nouns_info: NounsInfo) -> SignedNounsInfo {
             let encoded = Encode::encode(&nouns_info);
             let signature = sign!(&encoded, &self.attestation_privkey, SigType::Sr25519);
             SignedNounsInfo {
@@ -94,13 +155,31 @@ mod nouns_subgraph {
                 signature,
             }
         }
+
+        /// Verifies the signed nouns_info and return the inner data.
+        pub fn verify_nouns_info(
+            &self,
+            signed_nouns_info: SignedNounsInfo,
+        ) -> Result<NounsInfo, Error> {
+            let encoded = Encode::encode(&signed_nouns_info.nouns_info);
+            if !verify!(
+                &encoded,
+                &self.attestation_pubkey,
+                &signed_nouns_info,
+                SigType::Sr25519
+            ) {
+                return Err(Error::InvalidSignature);
+            }
+            Ok(signed_nouns_info.nouns_info)
+        }
     }
 
-    fn extract_nouns_info(body: &[u8]) -> Result<(), Error> {
+    pub fn extract_nouns_info(body: &[u8]) -> Result<(NounsInfo), Error> {
         let (nouns_info, _): (NounsInfo, usize) =
             serde_json_core::from_slice(body).or(Err(Error::InvalidBody))?;
-        //let current_bid
-        Ok(())
+        println!("{:?}", nouns_info);
+
+        Ok((nouns_info))
     }
 
     /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
@@ -115,7 +194,18 @@ mod nouns_subgraph {
         use ink_lang as ink;
 
         #[ink::test]
-        fn can_parse_nouns_response() {}
+        fn can_parse_nouns_response() {
+            let response = r#"{"data":{"auctions":[{"amount":"81600000000000000000","id":"335","settled":false}]}}"#;
+            let result = extract_nouns_info(response.as_bytes())?;
+            assert_eq!(
+                result,
+                Ok(NounsInfo {
+                    id: 335,
+                    amount: 81600000000000000000,
+                    settled: false
+                })
+            );
+        }
 
         #[ink::test]
         fn end_to_end() {

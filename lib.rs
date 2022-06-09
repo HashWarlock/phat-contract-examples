@@ -1,333 +1,186 @@
-// This is an example of building a game of Roshambo (Rock, Paper, Scissors) in a Fat Contract.
-//
-//! Roshambo Fat Contract
-
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
-use ink_lang as ink;
 
 use pink_extension as pink;
 
 #[pink::contract(env=PinkEnvironment)]
-mod roshambo {
+mod nouns_subgraph {
     use super::pink;
-    use alloc::vec::Vec as StorageVec;
-    use ink_env::{
-        call::{build_call, utils::ReturnType, ExecutionInput, Selector},
-        transfer,
+    use alloc::{
+        string::{String, ToString},
+        vec::Vec,
     };
     use ink_storage::{traits::SpreadAllocate, Mapping};
-    use pink::PinkEnvironment;
+    use pink::{
+        chain_extension::SigType, derive_sr25519_key, get_public_key, http_post, sign, verify,
+        PinkEnvironment,
+    };
     use scale::{Decode, Encode};
+    use serde::{Deserialize, Serialize};
+    use serde_json_core::from_slice;
 
-    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    /// Error types
-    pub enum Error {
-        GameInProgress,
-        AlreadyChoseMove,
-        BothPlayersChoseAMove,
-        NoPermissions,
-        NoChallengerExists,
-    }
-
-    /// Auction statuses
-    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(::scale_info::TypeInfo))]
-    pub enum Move {
-        /// Rock Move
-        Rock,
-        /// Paper Move
-        Paper,
-        /// Scissors Move
-        Scissors,
-        /// None is the default move
-        None,
-    }
-
-    impl Move {
-        pub fn from_u8(value: u8) -> Move {
-            match value {
-                1 => Move::Rock,
-                2 => Move::Paper,
-                3 => Move::Scissors,
-                _ => Move::None,
-            }
-        }
-    }
-
-    /// Game Results
-    #[derive(scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub enum GameResults {
-        /// Hand Czar is the winner
-        HandCzarWins,
-        /// Challenger is the winner
-        ChallengerWins,
-        /// Match ends in a draw
-        Draw,
-    }
-
-    /// Event emitted when a Player registers.
-    #[ink(event)]
-    pub struct PlayerRegistered {
-        game_id: u32,
-        challenger: AccountId,
-    }
-
-    /// Event emitted when a game is configured.
-    #[ink(event)]
-    pub struct GameConfigured {
-        game_id: u32,
-        hand_czar: AccountId,
-        challenger: AccountId,
-    }
-
-    /// Event emitted when player makes move
-    #[ink(event)]
-    pub struct PlayerMoved {
-        game_id: u32,
-        player: AccountId,
-    }
-
-    /// Challenger booted
-    #[ink(event)]
-    pub struct PlayerBooted {
-        game_id: u32,
-        challenger: AccountId,
-    }
-
-    /// Event emitted when game is settled and cleared.
-    #[ink(event)]
-    pub struct GameSettled {
-        game_id: u32,
-        winner: Option<AccountId>,
-    }
-
-    /// Defines the storage of the contract.
     #[ink(storage)]
-    #[derive(SpreadAllocate)]
-    pub struct Roshambo {
-        /// Roshambo game owner
-        hand_czar: AccountId,
-        /// Hand Czar Wins
-        hand_czar_wins: u32,
-        /// Hand Czar Losses
-        hand_czar_losses: u32,
-        /// Game ID
-        game_id: u32,
-        /// Challenger
-        challenger: Option<AccountId>,
-        /// Hand Czar most recent move
-        hand_czar_move: u8,
-        /// Challenger's most recent move
-        challenger_move: u8,
-        /// Game results = storage of winners per game id
-        game_results: Mapping<u32, Option<AccountId>>,
-        /// Game status
-        game_settled: bool,
+    #[derive(Default)]
+    pub struct NounsSubgraph {
+        admin: AccountId,
+        attestation_privkey: Vec<u8>,
+        attestation_pubkey: Vec<u8>,
+        nouns_id: u32,
+        current_bid: u128,
+        acceptable_price: u128,
     }
 
-    impl Roshambo {
-        /// Auction constructor.  
-        /// Initializes the start_block to next block (if not set).  
-        /// If start_block is set, checks it is in the future (to prevent backdating).  
+    #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        InvalidBody,
+        InvalidUrl,
+        InvalidSignature,
+        RequestFailed,
+        AuctionAlreadySettled,
+        MustGetLatestNounInfo,
+        NoPermissions,
+    }
+
+    impl NounsSubgraph {
         #[ink(constructor)]
         pub fn default() -> Self {
-            // This call is required in order to correctly initialize the
-            // `Mapping`s of our contract.
-            ink_lang::codegen::initialize_contract(|contract: &mut Self| {
-                contract.hand_czar = Self::env().caller();
-                contract.game_id = 0;
-                contract.hand_czar_wins = 0;
-                contract.hand_czar_losses = 0;
-                contract.challenger = None;
-                contract.hand_czar_move = 0;
-                contract.challenger_move = 0;
-                contract.game_settled = true;
-            })
-        }
-
-        /// Challenge the Hand Czar
-        #[ink(message)]
-        pub fn challenge_hand_czar(&mut self) -> Result<(), Error> {
-            if self.challenger.is_some() {
-                return Err(Error::GameInProgress);
-            }
-            // Set new challenger
-            self.challenger = Some(self.env().caller());
-            self.game_id += 1;
-            self.game_settled = false;
-            Ok(())
-        }
-
-        /// Rock, Paper, Scissors, Shoot!
-        #[ink(message)]
-        pub fn choose_a_move(&mut self, hand_move: u8) -> Result<(), Error> {
-            let sender = self.env().caller();
-            if self.challenger.is_some() && Some(sender) == self.challenger {
-                if self.challenger_move > 0 {
-                    return Err(Error::AlreadyChoseMove);
-                }
-                self.challenger_move = hand_move;
-                self.env().emit_event(PlayerMoved {
-                    game_id: self.game_id,
-                    player: sender,
-                });
-                Ok(())
-            } else if sender == self.hand_czar {
-                if self.hand_czar_move > 0 {
-                    return Err(Error::AlreadyChoseMove);
-                }
-                self.hand_czar_move = hand_move;
-                self.env().emit_event(PlayerMoved {
-                    game_id: self.game_id,
-                    player: self.hand_czar,
-                });
-                Ok(())
-            } else {
-                Err(Error::NoPermissions)
+            // Generate a Sr25519 key pair
+            let privkey = derive_sr25519_key!(b"gist-attestation-key");
+            let pubkey = get_public_key!(&privkey, SigType::Sr25519);
+            // Save sender as the contract admin
+            let admin = Self::env().caller();
+            Self {
+                admin,
+                attestation_privkey: privkey,
+                attestation_pubkey: pubkey,
+                nouns_id: 0,
+                current_bid: 0,
+                acceptable_price: 0,
             }
         }
 
-        /// Boot challenger for inactivity and clean slate
+        /// Set the acceptable price that the admin is comfortable bidding for a Noun.
         #[ink(message)]
-        pub fn boot_challenger(&mut self) -> Result<(), Error> {
-            if self.hand_czar == self.env().caller() {
-                if self.hand_czar_move > 0 && self.challenger_move > 0 {
-                    return Err(Error::BothPlayersChoseAMove);
-                }
-                let winner: Option<AccountId> = None;
-                if let Some(old_challenger) = self.challenger.clone() {
-                    self.challenger = None;
-                    self.hand_czar_move = 0;
-                    self.challenger_move = 0;
-                    self.game_settled = true;
-                    self.game_results.insert(&self.game_id, &winner);
-                    self.env().emit_event(PlayerBooted {
-                        game_id: self.game_id,
-                        challenger: old_challenger,
-                    });
-                } else {
-                    return Err(Error::NoChallengerExists);
-                }
-            } else {
+        pub fn set_acceptable_price(&mut self, acceptable_price: u128) -> Result<(), Error> {
+            if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
+            self.acceptable_price = acceptable_price;
             Ok(())
         }
 
-        /// Settle game
+        /// Set the last time admin queried for the latest Nouns bid price.
         #[ink(message)]
-        pub fn settle_game(&mut self) -> Result<(), Error> {
-            if self.hand_czar == self.env().caller() {
-                if self.hand_czar_move > 0 && self.challenger_move > 0 {
-                    let winner = self.determine_winner();
-                    self.challenger = None;
-                    self.hand_czar_move = 0;
-                    self.challenger_move = 0;
-                    self.game_settled = true;
-                    self.game_results.insert(&self.game_id, &winner);
-                    self.env().emit_event(GameSettled {
-                        game_id: self.game_id,
-                        winner,
-                    });
-                } else {
-                    return Err(Error::GameInProgress);
-                }
+        pub fn set_nouns_info(&mut self, signed_nouns_info: SignedNounsInfo) -> Result<(), Error> {
+            // Verify the Nouns Info
+            let nouns_info = self.verify_nouns_info(signed_nouns_info)?;
+            let nouns_id = nouns_info.id;
+            let current_bid = nouns_info.amount;
+            let settled = nouns_info.settled;
+            // If auction is settled then we cannot purchase the noun
+            if settled {
+                return Err(Error::AuctionAlreadySettled);
+            }
+
+            self.nouns_id = nouns_id;
+            self.current_bid = current_bid;
+
+            Ok(())
+        }
+
+        /// Check if the current bid price is affordable
+        #[ink(message)]
+        pub fn is_noun_affordable(&self) -> Result<bool, Error> {
+            if self.current_bid == 0 {
+                return Err(Error::MustGetLatestNounInfo);
+            }
+            if self.current_bid < self.acceptable_price {
+                Ok(true)
             } else {
-                return Err(Error::NoPermissions);
+                Ok(false)
             }
-            Ok(())
         }
 
-        /// Game results.
+        /// Get the latest bid price on the current Noun up for auction. Sign the info & return the result.
         #[ink(message)]
-        pub fn results(&self, game_id: u32) -> Option<AccountId> {
-            self.game_results.get(&game_id).unwrap_or(None)
-        }
-
-        /// Get Hand Czar Wins
-        #[ink(message)]
-        pub fn get_hand_czar_wins(&self) -> u32 {
-            self.hand_czar_wins
-        }
-
-        /// Get Hand Czar Losses
-        #[ink(message)]
-        pub fn get_hand_czar_losses(&self) -> u32 {
-            self.hand_czar_losses
-        }
-
-        /// Check if game is settled
-        #[ink(message)]
-        pub fn is_game_settled(&self) -> bool {
-            self.game_settled
-        }
-
-        /// Get current game id
-        #[ink(message)]
-        pub fn get_game_id(&self) -> u32 {
-            self.game_id
-        }
-
-        /// Check if Challenger has moved
-        #[ink(message)]
-        pub fn get_challenger_move_status(&self) -> bool {
-            self.challenger_move > 0
-        }
-
-        /// Check if Hand Czar has moved
-        #[ink(message)]
-        pub fn get_hand_czar_move_status(&self) -> bool {
-            self.hand_czar_move > 0
-        }
-
-        /// Determine winner
-        fn determine_winner(&mut self) -> Option<AccountId> {
-            let hand_czar_move = Move::from_u8(self.hand_czar_move);
-            let challenger_move = Move::from_u8(self.challenger_move);
-            match hand_czar_move {
-                Move::Rock => match challenger_move {
-                    Move::Rock => None,
-                    Move::Paper => {
-                        self.hand_czar_losses += 1;
-                        self.challenger
-                    }
-                    Move::Scissors => {
-                        self.hand_czar_wins += 1;
-                        Some(self.hand_czar)
-                    }
-                    _ => None,
-                },
-                Move::Paper => match challenger_move {
-                    Move::Rock => {
-                        self.hand_czar_wins += 1;
-                        Some(self.hand_czar)
-                    }
-                    Move::Paper => None,
-                    Move::Scissors => {
-                        self.hand_czar_losses += 1;
-                        self.challenger
-                    }
-                    _ => None,
-                },
-                Move::Scissors => match challenger_move {
-                    Move::Rock => {
-                        self.hand_czar_losses += 1;
-                        self.challenger
-                    }
-                    Move::Paper => {
-                        self.hand_czar_wins += 1;
-                        Some(self.hand_czar)
-                    }
-                    Move::Scissors => None,
-                    _ => None,
-                },
-                _ => None,
+        pub fn get_latest_nouns_info(&self) -> Result<SignedNounsInfo, Error> {
+            // Get the latest nouns info through http_post
+            let response = http_post!(NOUNS_HTTP_ENDPOINT, HTTP_POST_DATA);
+            if response.status_code != 200 {
+                return Err(Error::RequestFailed);
             }
+            let body = response.body;
+            // Extract Nouns Info
+            let (nouns_info, _): (NounsInfo, usize) =
+                serde_json_core::from_slice(&body).or(Err(Error::InvalidBody))?;
+            let result = self.sign_nouns_info(nouns_info);
+            Ok(result)
+        }
+
+        /// Signs the `nouns_info` with the attestation key pair.
+        pub fn sign_nouns_info(&self, nouns_info: NounsInfo) -> SignedNounsInfo {
+            let encoded = Encode::encode(&nouns_info);
+            let signature = sign!(&encoded, &self.attestation_privkey, SigType::Sr25519);
+            SignedNounsInfo {
+                nouns_info,
+                signature,
+            }
+        }
+
+        /// Verifies the signed nouns_info and return the inner data.
+        pub fn verify_nouns_info(
+            &self,
+            signed_nouns_info: SignedNounsInfo,
+        ) -> Result<NounsInfo, Error> {
+            let encoded = Encode::encode(&signed_nouns_info.nouns_info);
+            if !verify!(
+                &encoded,
+                &self.attestation_pubkey,
+                &signed_nouns_info.signature,
+                SigType::Sr25519
+            ) {
+                return Err(Error::InvalidSignature);
+            }
+            Ok(signed_nouns_info.nouns_info)
         }
     }
+
+    pub const HTTP_POST_DATA: &str = r#"{
+                "query":"query MyQuery{
+                    auctions(orderBy: endTime, orderDirection: desc, first: 1) {
+                        id
+                        amount
+                        settled
+                    }
+                }","variables":null,"operationalName":"MyQuery"
+            }"#;
+    pub const NOUNS_HTTP_ENDPOINT: &str =
+        "https://api.thegraph.com/subgraphs/name/nounsdao/nouns-subgraph";
+
+    #[derive(Deserialize, Encode, Decode, Debug, PartialEq)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct NounsInfo {
+        id: u32,
+        amount: u128,
+        settled: bool,
+    }
+
+    #[derive(Encode, Decode, Debug)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct SignedNounsInfo {
+        nouns_info: NounsInfo,
+        signature: Vec<u8>,
+    }
+
+    pub fn extract_nouns_info(body: &[u8]) -> Result<(), Error> {
+        let (nouns_info, _): (Data, usize) =
+            serde_json_core::from_slice(body).or(Err(Error::InvalidBody))?;
+        println!("{:?}", nouns_info);
+
+        Ok(())
+    }
+
     /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
     /// module and test functions are marked with a `#[test]` attribute.
     /// The below code is technically just normal Rust code.
@@ -339,50 +192,75 @@ mod roshambo {
         /// Imports `ink_lang` so we can use `#[ink::test]`.
         use ink_lang as ink;
 
-        fn set_sender(sender: AccountId, amount: Balance) {
-            ink_env::test::push_execution_context::<Environment>(
-                sender,
-                ink_env::account_id::<Environment>(),
-                1000000,
-                amount,
-                ink_env::test::CallData::new(ink_env::call::Selector::new([0x00; 4])), /* dummy */
-            );
+        #[ink::test]
+        fn can_parse_nouns_response() {
+            let response = r#"{
+                "data": {
+                    "auctions": [ 
+                        {
+                        "amount": "81600000000000000000",
+                        "id": "335",
+                        "settled": false
+                        }
+                    ]
+                }
+            }"#;
+            let result = extract_nouns_info(response.as_bytes());
+            assert_eq!(result, Ok(()));
         }
 
         #[ink::test]
         fn end_to_end() {
-            use pink_extension::chain_extension::mock;
-            // Mock derive key call (a pregenerated key pair)
-            mock::mock_derive_sr25519_key(|_| {
-                hex::decode("78003ee90ff2544789399de83c60fa50b3b24ca86c7512d0680f64119207c80ab240b41344968b3e3a71a02c0e8b454658e00e9310f443935ecadbdd1674c683").unwrap()
-            });
-            mock::mock_get_public_key(|_| {
-                hex::decode("ce786c340288b79a951c68f87da821d6c69abd1899dff695bda95e03f9c0b012")
-                    .unwrap()
-            });
-
-            // Test accounts
-            let accounts = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .expect("Cannot get accounts");
-            mock::mock_sign(|_| b"mock-signature".to_vec());
-            mock::mock_verify(|_| true);
-
-            // Construct contract
-            let mut contract = Roshambo::default();
-            assert_eq!(contract.hand_czar, accounts.alice);
-            let alice = accounts.alice;
-            let bob = accounts.bob;
-            contract.choose_a_move(1);
-            set_sender(bob, 100);
-            contract.challenge_hand_czar();
-            contract.choose_a_move(2);
-            set_sender(alice, 100);
-            contract.settle_game();
-            assert_eq!(contract.results(1), Some(bob));
-            let czar_wins = contract.get_hand_czar_wins();
-            let czar_losses = contract.get_hand_czar_losses();
-            assert_eq!((czar_wins, czar_losses), (0, 1));
-            assert_eq!(contract.challenger, None);
+            //     use pink_extension::chain_extension::{mock, HttpResponse};
+            //
+            //     // Mock derive key call (a pregenerated key pair)
+            //     mock::mock_derive_sr25519_key(|_| {
+            //         hex::decode("78003ee90ff2544789399de83c60fa50b3b24ca86c7512d0680f64119207c80ab240b41344968b3e3a71a02c0e8b454658e00e9310f443935ecadbdd1674c683").unwrap()
+            //     });
+            //     mock::mock_get_public_key(|_| {
+            //         hex::decode("ce786c340288b79a951c68f87da821d6c69abd1899dff695bda95e03f9c0b012")
+            //             .unwrap()
+            //     });
+            //     mock::mock_sign(|_| b"mock-signature".to_vec());
+            //     mock::mock_verify(|_| true);
+            //
+            //     // Test accounts
+            //     let accounts = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+            //         .expect("Cannot get accounts");
+            //     // Construct a contract (deployed by `accounts.alice` by default)
+            //     let mut contract = FatSample::default();
+            //     assert_eq!(contract.admin, accounts.alice);
+            //     // Admin (alice) can set POAP
+            //     assert!(contract
+            //         .admin_set_poap_code(vec!["code0".to_string(), "code1".to_string(),])
+            //         .is_ok());
+            //     // Generate an attestation
+            //     //
+            //     // Mock a http request first (the 256 bits account id is the pubkey of Alice)
+            //     mock::mock_http_request(|_| {
+            //         HttpResponse::ok(b"This gist is owned by address: 0x0101010101010101010101010101010101010101010101010101010101010101".to_vec())
+            //     });
+            //     let result = contract.attest_gist("https://gist.githubusercontent.com/h4x3rotab/0cabeb528bdaf30e4cf741e26b714e04/raw/620f958fb92baba585a77c1854d68dc986803b4e/test%2520gist".to_string());
+            //     assert!(result.is_ok());
+            //     let attestation = result.unwrap();
+            //     assert_eq!(attestation.attestation.username, "h4x3rotab");
+            //     assert_eq!(attestation.attestation.account_id, accounts.alice);
+            //     // Before redeem
+            //     assert_eq!(contract.my_poap(), None);
+            //     // Redeem
+            //     assert!(contract.redeem(attestation).is_ok());
+            //     assert_eq!(contract.total_redeemed, 1);
+            //     assert_eq!(
+            //         contract.account_by_username.get("h4x3rotab".to_string()),
+            //         Some(accounts.alice)
+            //     );
+            //     assert_eq!(
+            //         contract.username_by_account.get(&accounts.alice),
+            //         Some("h4x3rotab".to_string())
+            //     );
+            //     assert_eq!(contract.redeem_by_account.get(accounts.alice), Some(0));
+            //     // Check my redemption code
+            //     assert_eq!(contract.my_poap(), Some("code0".to_string()))
         }
     }
 }
