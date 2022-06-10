@@ -71,18 +71,10 @@ mod nouns_subgraph {
 
         /// Set the last time admin queried for the latest Nouns bid price.
         #[ink(message)]
-        pub fn set_nouns_info(
-            &mut self,
-            nouns_id: u32,
-            current_bid: u64,
-            settled: bool,
-            signature: Vec<u8>,
-        ) -> Result<(), Error> {
-            let nouns_id_string = nouns_id.to_string();
-            let current_bid_string = current_bid.to_string();
+        pub fn set_nouns_info(&mut self, nouns_info_fe: NounsInfoFE) -> Result<(), Error> {
+            let settled = nouns_info_fe.settled;
             // Verify the Nouns Info
-            let nouns_info =
-                self.verify_nouns_info(nouns_id_string, current_bid_string, signature)?;
+            let (nouns_id, current_bid) = self.verify_nouns_info(nouns_info_fe)?;
             // If auction is settled then we cannot purchase the noun
             if settled {
                 return Err(Error::AuctionAlreadySettled);
@@ -107,11 +99,26 @@ mod nouns_subgraph {
             }
         }
 
+        #[ink(message)]
+        pub fn get_current_bid(&self) -> u64 {
+            self.current_bid
+        }
+
+        #[ink(message)]
+        pub fn get_acceptable_price(&self) -> u64 {
+            self.acceptable_price
+        }
+
+        #[ink(message)]
+        pub fn get_nouns_id(&self) -> u32 {
+            self.nouns_id
+        }
+
         /// Get the latest bid price on the current Noun up for auction. Sign the info & return the result.
         #[ink(message)]
-        pub fn get_latest_nouns_info(&self) -> Result<(String, String, Vec<u8>), Error> {
+        pub fn get_latest_nouns_info(&self) -> Result<NounsInfoFE, Error> {
             // Get the latest nouns info through http_post
-            let response = http_post!(NOUNS_HTTP_ENDPOINT, HTTP_POST_DATA);
+            let response = http_post!(NOUNS_HTTP_ENDPOINT, HTTP_POST_DATA.as_bytes().to_vec());
             if response.status_code != 200 {
                 return Err(Error::RequestFailed);
             }
@@ -126,22 +133,28 @@ mod nouns_subgraph {
             }
             let nouns_id = nouns_info.id.to_string().parse().unwrap();
             let current_bid = nouns_info.amount.to_string().parse().unwrap();
+            let settled = nouns_info.settled;
 
             let encoded = Encode::encode(&nouns_info);
             let signature = sign!(&encoded, &self.attestation_privkey, SigType::Sr25519);
 
-            Ok((nouns_id, current_bid, signature))
+            let nouns_info_fe = NounsInfoFE {
+                id: nouns_id,
+                amount: current_bid,
+                settled,
+                signature,
+            };
+
+            Ok(nouns_info_fe)
         }
 
         /// Verifies the signed nouns_info and return the inner data.
-        pub fn verify_nouns_info(
-            &self,
-            nouns_id: String,
-            current_bid: String,
-            signature: Vec<u8>,
-        ) -> Result<bool, Error> {
-            let id: &str = nouns_id.as_str();
-            let amount: &str = current_bid.as_str();
+        pub fn verify_nouns_info(&self, nouns_info_fe: NounsInfoFE) -> Result<(u32, u64), Error> {
+            let nouns_id: u32 = nouns_info_fe.id.parse().unwrap();
+            let current_bid: u64 = nouns_info_fe.amount.parse().unwrap();
+            let id: &str = nouns_info_fe.id.as_str();
+            let amount: &str = nouns_info_fe.amount.as_str();
+            let signature = nouns_info_fe.signature;
             let settled = false;
             let nouns_info = NounsInfo {
                 id,
@@ -157,19 +170,11 @@ mod nouns_subgraph {
             ) {
                 return Err(Error::InvalidSignature);
             }
-            Ok(true)
+            Ok((nouns_id, current_bid))
         }
     }
 
-    pub const HTTP_POST_DATA: &str = r#"{
-                "query":"query MyQuery{
-                    auctions(orderBy: endTime, orderDirection: desc, first: 1) {
-                        id
-                        amount
-                        settled
-                    }
-                }","variables":null,"operationalName":"MyQuery"
-            }"#;
+    pub const HTTP_POST_DATA: &str = r#"{"query":"query MyQuery {\n  auctions(orderBy: endTime, orderDirection: desc, first: 1) {\n    amount\n    id\n  settled\n}\n}\n","variables":null,"operationName":"MyQuery"}"#;
     pub const NOUNS_HTTP_ENDPOINT: &str =
         "https://api.thegraph.com/subgraphs/name/nounsdao/nouns-subgraph";
 
@@ -190,6 +195,15 @@ mod nouns_subgraph {
         id: &'a str,
         amount: &'a str,
         settled: bool,
+    }
+
+    #[derive(Encode, Decode, Debug)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct NounsInfoFE {
+        id: String,
+        amount: String,
+        settled: bool,
+        signature: Vec<u8>,
     }
 
     pub fn extract_nouns_info(body: &[u8]) -> Result<(), Error> {
