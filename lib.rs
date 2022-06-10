@@ -10,6 +10,7 @@ mod nouns_subgraph {
         string::{String, ToString},
         vec::Vec,
     };
+    use ink_storage::traits::SpreadAllocate;
     use pink::{
         chain_extension::SigType, derive_sr25519_key, get_public_key, http_post, sign, verify,
         PinkEnvironment,
@@ -19,7 +20,7 @@ mod nouns_subgraph {
     use serde_json_core::from_slice;
 
     #[ink(storage)]
-    #[derive(Default)]
+    #[derive(SpreadAllocate)]
     pub struct NounsSubgraph {
         admin: AccountId,
         attestation_privkey: Vec<u8>,
@@ -49,14 +50,16 @@ mod nouns_subgraph {
             let pubkey = get_public_key!(&privkey, SigType::Sr25519);
             // Save sender as the contract admin
             let admin = Self::env().caller();
-            Self {
-                admin,
-                attestation_privkey: privkey,
-                attestation_pubkey: pubkey,
-                nouns_id: 0,
-                current_bid: 0,
-                acceptable_price: 0,
-            }
+            // This call is required in order to correctly initialize the
+            // `Mapping`s of our contract.
+            ink_lang::codegen::initialize_contract(|contract: &mut Self| {
+                contract.admin = admin;
+                contract.attestation_privkey = privkey;
+                contract.attestation_pubkey = pubkey;
+                contract.nouns_id = 0;
+                contract.current_bid = 0;
+                contract.acceptable_price = 0;
+            })
         }
 
         /// Set the acceptable price that the admin is comfortable bidding for a Noun.
@@ -237,6 +240,16 @@ mod nouns_subgraph {
             let result = extract_nouns_info(response.as_bytes());
 
             assert_eq!(result, Ok(()));
+        }
+
+        #[ink::test]
+        fn set_nouns_info_works() {
+            let nouns_info_fe = NounsInfoFE {
+                id: "337".to_string(),
+                amount: "81600000000000000000".to_string(),
+                settled: false,
+                signature: "0x0207d143d07d75e4f9233ee31b485dbd33b713b614cbcbe37febcf94537d980ed58ababd76eb0d5d2b23c78cc4dd287d8febae32212bc8e48e15ba24bc7b1182".encode(),
+            };
         }
     }
 }
