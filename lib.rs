@@ -103,12 +103,12 @@ mod nouns_subgraph {
         }
 
         #[ink(message)]
-        pub fn get_current_bid(&self) -> u64 {
+        pub fn get_current_bid(&self) -> u128 {
             self.current_bid
         }
 
         #[ink(message)]
-        pub fn get_acceptable_price(&self) -> u64 {
+        pub fn get_acceptable_price(&self) -> u128 {
             self.acceptable_price
         }
 
