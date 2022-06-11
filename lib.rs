@@ -26,8 +26,8 @@ mod nouns_subgraph {
         attestation_privkey: Vec<u8>,
         attestation_pubkey: Vec<u8>,
         nouns_id: u32,
-        current_bid: u64,
-        acceptable_price: u64,
+        current_bid: u128,
+        acceptable_price: u128,
     }
 
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
@@ -44,7 +44,7 @@ mod nouns_subgraph {
 
     impl NounsSubgraph {
         #[ink(constructor)]
-        pub fn default() -> Self {
+        pub fn new() -> Self {
             // Generate a Sr25519 key pair
             let privkey = derive_sr25519_key!(b"gist-attestation-key");
             let pubkey = get_public_key!(&privkey, SigType::Sr25519);
@@ -64,7 +64,7 @@ mod nouns_subgraph {
 
         /// Set the acceptable price that the admin is comfortable bidding for a Noun.
         #[ink(message)]
-        pub fn set_acceptable_price(&mut self, acceptable_price: u64) -> Result<(), Error> {
+        pub fn set_acceptable_price(&mut self, acceptable_price: u128) -> Result<(), Error> {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
@@ -152,9 +152,9 @@ mod nouns_subgraph {
         }
 
         /// Verifies the signed nouns_info and return the inner data.
-        pub fn verify_nouns_info(&self, nouns_info_fe: NounsInfoFE) -> Result<(u32, u64), Error> {
+        pub fn verify_nouns_info(&self, nouns_info_fe: NounsInfoFE) -> Result<(u32, u128), Error> {
             let nouns_id: u32 = nouns_info_fe.id.parse().unwrap();
-            let current_bid: u64 = nouns_info_fe.amount.parse().unwrap();
+            let current_bid: u128 = nouns_info_fe.amount.parse().unwrap();
             let id: &str = nouns_info_fe.id.as_str();
             let amount: &str = nouns_info_fe.amount.as_str();
             let signature = nouns_info_fe.signature;
