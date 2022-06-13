@@ -1,6 +1,6 @@
 # Fat Contract Workshop
 
-This workshop will demonstrate how to create a game of Roshambo (Rock, Paper, Scissors) in a Fat Contract.
+This workshop will demonstrate how to make a HTTPS request to an indexing service Subgraph to query information about the NounsDAO collection in a Fat Contract.
 
 ## Introduction
 
@@ -18,7 +18,7 @@ Fat Contract is 100% compatible with Substrate's `pallet-contracts`. It fully su
 
 ## About this workshop
 
-This workshop will demonstrate how to create a game of Roshambo (Rock, Paper, Scissors) in a Fat Contract.
+This workshop will demonstrate how to make a HTTPS request to an indexing service Subgraph to query information about the NounsDAO collection in a Fat Contract.
 
 ## Environment Preparation
 
@@ -167,6 +167,9 @@ Follow the steps to run the frontend
     ```
 
 You shall see the identical page as we have [deployed](#play-with-our-deployed-version).
+
+Check out the example on YouTube:
+[![Fat Contracts Cross-Chain Use Case](./static/subgraph-nouns-video.png)](https://www.youtube.com/watch?v=THeM8E-3lec "Fat Contracts Cross-Chain Use Case")
 
 ## Appendix
 
