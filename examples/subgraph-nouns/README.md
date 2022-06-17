@@ -1,5 +1,7 @@
 # Fat Contract Query NounsDAO SubGraph
-This is a workshop to show the capabilities of Fat Contracts in a cross-chain scenario through HTTP requests. In this case, the demo will show how to query the NounsDAO SubGraph through an HTTP request to retrieve information about the current Noun up for auction.
+# Fat Contract Workshop
+
+This workshop will demonstrate how to make a HTTPS request to an indexing service Subgraph to query information about the NounsDAO collection in a Fat Contract.
 
 ## Introduction
 
@@ -14,6 +16,10 @@ Instead, it aims to provide the rich features that ordinary smart contracts cann
 - Confidentiality: contract state is hidden by default unless you specifically expose it via the read call
 
 Fat Contract is 100% compatible with Substrate's `pallet-contracts`. It fully supports the unmodified ink! smart contracts. Therefore you can still stick to your favorite toolchain including `cargo-contract`,  `@polkadot/contract-api`, and the Polkadot.js Extension.
+
+## About this workshop
+
+This workshop will demonstrate how to make a HTTPS request to an indexing service Subgraph to query information about the NounsDAO collection in a Fat Contract.
 
 ## Environment Preparation
 
@@ -163,6 +169,9 @@ Follow the steps to run the frontend
 
 You shall see the identical page as we have [deployed](#play-with-our-deployed-version).
 
+Check out the example on YouTube:
+[![Fat Contracts Cross-Chain Use Case](./static/subgraph-nouns-video.png)](https://www.youtube.com/watch?v=THeM8E-3lec "Fat Contracts Cross-Chain Use Case")
+
 ## Appendix
 
 ### Resources
@@ -194,4 +203,3 @@ You shall see the identical page as we have [deployed](#play-with-our-deployed-v
         - 0x6cfc1282880305c7691f0941b98089b9da17acde43b66ef2220022797bb3e370
     - https://poc5.phala.network/tee-api-5
         - 0xbed94c30d660a1de5a499e38f9f3afe9ccc1ef5f901530efd48de641679fbc7d
-

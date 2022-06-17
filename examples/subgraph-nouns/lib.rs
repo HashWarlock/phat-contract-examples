@@ -10,6 +10,7 @@ mod nouns_subgraph {
         string::{String, ToString},
         vec::Vec,
     };
+    use ink_storage::traits::SpreadAllocate;
     use pink::{
         chain_extension::SigType, derive_sr25519_key, get_public_key, http_post, sign, verify,
         PinkEnvironment,
@@ -19,14 +20,14 @@ mod nouns_subgraph {
     use serde_json_core::from_slice;
 
     #[ink(storage)]
-    #[derive(Default)]
+    #[derive(SpreadAllocate)]
     pub struct NounsSubgraph {
         admin: AccountId,
         attestation_privkey: Vec<u8>,
         attestation_pubkey: Vec<u8>,
         nouns_id: u32,
-        current_bid: u64,
-        acceptable_price: u64,
+        current_bid: u128,
+        acceptable_price: u128,
     }
 
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
@@ -43,25 +44,27 @@ mod nouns_subgraph {
 
     impl NounsSubgraph {
         #[ink(constructor)]
-        pub fn default() -> Self {
+        pub fn new() -> Self {
             // Generate a Sr25519 key pair
             let privkey = derive_sr25519_key!(b"gist-attestation-key");
             let pubkey = get_public_key!(&privkey, SigType::Sr25519);
             // Save sender as the contract admin
             let admin = Self::env().caller();
-            Self {
-                admin,
-                attestation_privkey: privkey,
-                attestation_pubkey: pubkey,
-                nouns_id: 0,
-                current_bid: 0,
-                acceptable_price: 0,
-            }
+            // This call is required in order to correctly initialize the
+            // `Mapping`s of our contract.
+            ink_lang::codegen::initialize_contract(|contract: &mut Self| {
+                contract.admin = admin;
+                contract.attestation_privkey = privkey;
+                contract.attestation_pubkey = pubkey;
+                contract.nouns_id = 0;
+                contract.current_bid = 0;
+                contract.acceptable_price = 0;
+            })
         }
 
         /// Set the acceptable price that the admin is comfortable bidding for a Noun.
         #[ink(message)]
-        pub fn set_acceptable_price(&mut self, acceptable_price: u64) -> Result<(), Error> {
+        pub fn set_acceptable_price(&mut self, acceptable_price: u128) -> Result<(), Error> {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
@@ -100,12 +103,12 @@ mod nouns_subgraph {
         }
 
         #[ink(message)]
-        pub fn get_current_bid(&self) -> u64 {
+        pub fn get_current_bid(&self) -> u128 {
             self.current_bid
         }
 
         #[ink(message)]
-        pub fn get_acceptable_price(&self) -> u64 {
+        pub fn get_acceptable_price(&self) -> u128 {
             self.acceptable_price
         }
 
@@ -149,9 +152,9 @@ mod nouns_subgraph {
         }
 
         /// Verifies the signed nouns_info and return the inner data.
-        pub fn verify_nouns_info(&self, nouns_info_fe: NounsInfoFE) -> Result<(u32, u64), Error> {
+        pub fn verify_nouns_info(&self, nouns_info_fe: NounsInfoFE) -> Result<(u32, u128), Error> {
             let nouns_id: u32 = nouns_info_fe.id.parse().unwrap();
-            let current_bid: u64 = nouns_info_fe.amount.parse().unwrap();
+            let current_bid: u128 = nouns_info_fe.amount.parse().unwrap();
             let id: &str = nouns_info_fe.id.as_str();
             let amount: &str = nouns_info_fe.amount.as_str();
             let signature = nouns_info_fe.signature;
@@ -237,6 +240,16 @@ mod nouns_subgraph {
             let result = extract_nouns_info(response.as_bytes());
 
             assert_eq!(result, Ok(()));
+        }
+
+        #[ink::test]
+        fn set_nouns_info_works() {
+            let nouns_info_fe = NounsInfoFE {
+                id: "337".to_string(),
+                amount: "81600000000000000000".to_string(),
+                settled: false,
+                signature: "0x0207d143d07d75e4f9233ee31b485dbd33b713b614cbcbe37febcf94537d980ed58ababd76eb0d5d2b23c78cc4dd287d8febae32212bc8e48e15ba24bc7b1182".encode(),
+            };
         }
     }
 }
