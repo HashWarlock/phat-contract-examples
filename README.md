@@ -167,9 +167,6 @@ Follow the steps to run the frontend
 
 You shall see the identical page as we have [deployed](#play-with-our-deployed-version).
 
-Check out the example on YouTube:
-[![Fat Contracts Cross-Chain Use Case](./static/subgraph-nouns-video.png)](https://www.youtube.com/watch?v=THeM8E-3lec "Fat Contracts Cross-Chain Use Case")
-
 ## Appendix
 
 ### Resources
