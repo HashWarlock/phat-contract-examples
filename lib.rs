@@ -9,6 +9,7 @@ mod phat_rpc {
     use alloc::{
         format,
         string::{String, ToString},
+        vec,
         vec::Vec,
     };
     use ink_storage::{traits::SpreadAllocate, Mapping};
@@ -64,7 +65,7 @@ mod phat_rpc {
             }
 
             let http_endpoint = format!(
-                "https://{}.api.onfinality.io/rpc\\?apikey\\={}",
+                "https://{}.api.onfinality.io/rpc?apikey={}",
                 chain, self.api_key
             );
             self.rpc_nodes.insert(&chain, &http_endpoint);
@@ -97,14 +98,18 @@ mod phat_rpc {
                 Some(rpc_node) => rpc_node,
                 None => return Err(Error::ChainNotConfigured),
             };
-
             let data = format!(
                 r#"{{"id":1,"jsonrpc":"2.0","method":"system_accountNextIndex","params":["{}"]}}"#,
                 account_id
             )
             .into_bytes();
+            let content_length = format!("{}", data.len());
+            let headers: Vec<(String, String)> = vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Content-Length".into(), content_length),
+            ];
             // Get next nonce for the account through HTTP request
-            let response = http_post!(rpc_node, data);
+            let response = http_post!(rpc_node, data, headers);
             if response.status_code != 200 {
                 return Err(Error::RequestFailed);
             }
@@ -121,10 +126,6 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            let account_id = match self.chain_account_id.get(&chain) {
-                Some(account_id) => account_id,
-                None => return Err(Error::ChainNotConfigured),
-            };
             let rpc_node = match self.rpc_nodes.get(&chain) {
                 Some(rpc_node) => rpc_node,
                 None => return Err(Error::ChainNotConfigured),
@@ -132,8 +133,13 @@ mod phat_rpc {
             let data = r#"{"id":1, "jsonrpc":"2.0", "method": "state_getRuntimeVersion"}"#
                 .to_string()
                 .into_bytes();
+            let content_length = format!("{}", data.len());
+            let headers: Vec<(String, String)> = vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Content-Length".into(), content_length),
+            ];
             // Get next nonce for the account through HTTP request
-            let response = http_post!(rpc_node, data);
+            let response = http_post!(rpc_node, data, headers);
             if response.status_code != 200 {
                 return Err(Error::RequestFailed);
             }
@@ -166,10 +172,6 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            let account_id = match self.chain_account_id.get(&chain) {
-                Some(account_id) => account_id,
-                None => return Err(Error::ChainNotConfigured),
-            };
             let rpc_node = match self.rpc_nodes.get(&chain) {
                 Some(rpc_node) => rpc_node,
                 None => return Err(Error::ChainNotConfigured),
@@ -178,8 +180,13 @@ mod phat_rpc {
                 r#"{"id":1, "jsonrpc":"2.0", "method": "chain_getBlockHash","params":["0"]}"#
                     .to_string()
                     .into_bytes();
+            let content_length = format!("{}", data.len());
+            let headers: Vec<(String, String)> = vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Content-Length".into(), content_length),
+            ];
             // Get next nonce for the account through HTTP request
-            let response = http_post!(rpc_node, data);
+            let response = http_post!(rpc_node, data, headers);
             if response.status_code != 200 {
                 return Err(Error::RequestFailed);
             }

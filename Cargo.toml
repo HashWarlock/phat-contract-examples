@@ -1,6 +1,6 @@
 [package]
 name = "phat-rpc"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Joshua <hashwarlock@phala.network>"]
 edition = "2021"
 rust-version = "1.56.1"
