@@ -60,7 +60,8 @@ mod phat_rpc {
     use scale::{Compact, Decode, Encode};
     use serde::Deserialize;
     use serde_json_core::from_slice;
-    use sp_core::crypto::Ss58AddressFormat;
+    use sp_core_hashing::blake2_256;
+    use ss58_registry::Ss58AddressFormat;
 
     #[ink(storage)]
     #[derive(SpreadAllocate)]
@@ -408,7 +409,7 @@ mod phat_rpc {
                 extra.encode_to(&mut bytes);
                 additional_params.encode_to(&mut bytes);
                 if bytes.len() > 256 {
-                    signer.sign(sp_core::blake2_256(&bytes))
+                    signer.sign(sp_core_hashing::blake2_256(&bytes))
                 } else {
                     signer.sign(bytes)
                 }
@@ -640,7 +641,7 @@ mod phat_rpc {
             extra.encode_to(&mut bytes);
             additional_params.encode_to(&mut bytes);
             if bytes.len() > 256 {
-                signer.sign(sp_core::blake2_256(&bytes))
+                signer.sign(sp_core_hashing::blake2_256(&bytes))
             } else {
                 signer.sign(bytes)
             }
