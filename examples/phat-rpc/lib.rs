@@ -1,11 +1,13 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(trace_macros)]
 
-use fat_utils::attestation;
+mod era;
+use crate::phat_rpc::{ExtraParam, GenesisHashOk, NextNonceOk, RuntimeVersionOk};
 use ink_env::AccountId;
 use ink_lang as ink;
 use ink_prelude::{string::String, vec::Vec};
 use pink_extension as pink;
+use pink_utils::attestation;
 
 #[ink::trait_definition]
 pub trait SubmittableOracle {
@@ -23,19 +25,30 @@ pub trait SubmittableOracle {
 
     #[ink(message)]
     fn get_genesis_hash(&self, chain: String) -> Result<attestation::Attestation, Vec<u8>>;
+
+    #[ink(message)]
+    fn send_transaction(
+        &self,
+        chain: String,
+        account_nonce: NextNonceOk,
+        runtime_version: RuntimeVersionOk,
+        genesis_hash: GenesisHashOk,
+        call_data: Vec<u8>,
+        extra_param: ExtraParam,
+    ) -> Result<(), Vec<u8>>;
 }
 
 #[pink::contract(env=PinkEnvironment)]
 mod phat_rpc {
     use super::pink;
     use super::SubmittableOracle;
-    use pink::logger::{Level, Logger};
+    use crate::era::Era;
     use pink::{http_post, PinkEnvironment};
 
     use base58::ToBase58;
     use core::fmt::Write;
-    use fat_utils::attestation;
     use ink_prelude::{
+        borrow::ToOwned,
         format,
         string::{String, ToString},
         vec,
@@ -43,13 +56,11 @@ mod phat_rpc {
     };
     use ink_storage::traits::SpreadAllocate;
     use ink_storage::Mapping;
-    use scale::{Decode, Encode};
+    use pink_utils::attestation;
+    use scale::{Compact, Decode, Encode};
     use serde::Deserialize;
     use serde_json_core::from_slice;
     use sp_core::crypto::Ss58AddressFormat;
-
-    static LOGGER: Logger = Logger::with_max_level(Level::Info);
-    pink::register_logger!(&LOGGER);
 
     #[ink(storage)]
     #[derive(SpreadAllocate)]
@@ -346,19 +357,118 @@ mod phat_rpc {
 
             Ok(result)
         }
+
+        /// Compose a transaction, sign with derived account for the chain, and submit the extrinsic
+        /// to the RPC Node with author_submitExtrinsic call
+        #[ink(message)]
+        fn send_transaction(
+            &self,
+            chain: String,
+            account_nonce: NextNonceOk,
+            runtime_version: RuntimeVersionOk,
+            genesis_hash: GenesisHashOk,
+            call_data: Vec<u8>,
+            extra_param: ExtraParam,
+        ) -> core::result::Result<(), Vec<u8>> {
+            if self.admin != self.env().caller() {
+                return Err(Error::NoPermissions.encode());
+            }
+            let account_id = match self.chain_account_id.get(&chain) {
+                Some(account_id) => account_id,
+                None => return Err(Error::ChainNotConfigured.encode()),
+            };
+            let signer = match self.account_private.get(&chain) {
+                Some(signer) => signer,
+                None => return Err(Error::ChainNotConfigured.encode()),
+            };
+            let rpc_node = match self.rpc_nodes.get(&chain) {
+                Some(rpc_node) => rpc_node,
+                None => return Err(Error::ChainNotConfigured.encode()),
+            };
+            // SCALE encode call data to bytes (pallet u8, call u8, call params).
+            let call_data_enc = Encoded(call_data);
+            // Construct our custom additional params.
+            let additional_params = (
+                runtime_version.spec_version,
+                runtime_version.transaction_version,
+                genesis_hash.genesis_hash.clone(),
+                // This should be configurable tx has a lifetime
+                genesis_hash.genesis_hash,
+            );
+            // Construct the extra param
+            let extra = (
+                extra_param.era,
+                Compact(account_nonce.next_nonce),
+                Encoded(extra_param.tip.encode()),
+            );
+            // Construct signature
+            let signature = {
+                let mut bytes = Vec::new();
+                call_data_enc.encode_to(&mut bytes);
+                extra.encode_to(&mut bytes);
+                additional_params.encode_to(&mut bytes);
+                if bytes.len() > 256 {
+                    signer.sign(sp_core::blake2_256(&bytes))
+                } else {
+                    signer.sign(bytes)
+                }
+            };
+            // Encode Extrinsic
+            let extrinsic = {
+                let mut encoded_inner = Vec::new();
+                // "is signed" + tx protocol v4
+                (0b10000000 + 4u8).encode_to(&mut encoded_inner);
+                // from address for signature
+                account_id.encode_to(&mut encoded_inner);
+                // the signature bytes
+                signature.encode_to(&mut encoded_inner);
+                // attach custom extra params
+                extra.encode_to(&mut encoded_inner);
+                // and now, call data
+                call_data_enc.encode_to(&mut encoded_inner);
+                // now, prefix byte length:
+                let len = Compact(
+                    u32::try_from(encoded_inner.len()).expect("extrinsic size expected to be <4GB"),
+                );
+                let mut encoded = Vec::new();
+                len.encode_to(&mut encoded);
+                encoded.extend(encoded_inner);
+                encoded
+            };
+            // Encode extrinsic then send RPC Call
+            //let extrinsic_enc = Encoded(extrinsic);
+            let extrinsic_hex = vec_to_hex_string(&extrinsic);
+            let data = format!(
+                r#"{{"id":1,"jsonrpc":"2.0","method":"author_submitExtrinsic","params":["{}"]}}"#,
+                extrinsic_hex
+            )
+            .into_bytes();
+            let content_length = format!("{}", data.len());
+            let headers: Vec<(String, String)> = vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Content-Length".into(), content_length),
+            ];
+            // Get next nonce for the account through HTTP request
+            let response = http_post!(rpc_node, data, headers);
+            if response.status_code != 200 {
+                return Err(Error::RequestFailed.encode());
+            }
+            // May need a check or a similar submit and subscribe to validate function
+            Ok(())
+        }
     }
 
     #[derive(Deserialize, Encode, Clone, Debug, PartialEq)]
     pub struct NextNonce<'a> {
         jsonrpc: &'a str,
-        result: u32,
+        result: u64,
         id: u32,
     }
 
     #[derive(Encode, Decode, Clone, Debug)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub struct NextNonceOk {
-        next_nonce: u32,
+        next_nonce: u64,
     }
 
     #[derive(Deserialize, Debug)]
@@ -409,7 +519,27 @@ mod phat_rpc {
         genesis_hash: String,
     }
 
-    pub fn extract_next_nonce(body: &[u8]) -> core::result::Result<u32, Error> {
+    #[derive(Encode, Decode, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct ExtraParam {
+        // 0 if Immortal, or Vec<u64, u64> for period and the phase.
+        era: Era,
+        // Tip for the block producer.
+        tip: u128,
+    }
+
+    /// Wraps an already encoded byte vector, prevents being encoded as a raw byte vector as part of
+    /// the transaction payload
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct Encoded(pub Vec<u8>);
+
+    impl scale::Encode for Encoded {
+        fn encode(&self) -> Vec<u8> {
+            self.0.to_owned()
+        }
+    }
+
+    pub fn extract_next_nonce(body: &[u8]) -> core::result::Result<u64, Error> {
         let (next_nonce, _): (NextNonce, usize) = serde_json_core::from_slice(body).unwrap();
         let result = next_nonce.result;
         Ok(result)
@@ -460,6 +590,100 @@ mod phat_rpc {
         context.finalize()
     }
 
+    fn gen_transaction(
+        account_nonce: NextNonceOk,
+        runtime_version: RuntimeVersionOk,
+        genesis_hash: GenesisHashOk,
+        call_data: Vec<u8>,
+        extra_param: ExtraParam,
+    ) -> String {
+        let (signer, verifier) = attestation::create(b"a spoon of salt");
+        let account_public: &[u8] = &verifier.pubkey;
+        let version = Ss58AddressFormat::try_from("kusama").expect("ok");
+
+        let ident: u16 = u16::from(version) & 0b0011_1111_1111_1111;
+        let mut v: Vec<u8> = match ident {
+            0..=63 => vec![ident as u8],
+            64..=16_383 => {
+                let first = ((ident & 0b0000_0000_1111_1100) as u8) >> 2;
+                let second = ((ident >> 8) as u8) | ((ident & 0b0000_0000_0000_0011) as u8) << 6;
+                vec![first | 0b01000000, second]
+            }
+            _ => unreachable!("masked out the upper two bits; qed"),
+        };
+
+        let account_public: &[u8; 32] = account_public.try_into().expect("works");
+        v.extend(account_public);
+        let r = ss58hash(&v);
+        v.extend(&r.as_bytes()[0..2]);
+        let account_public_ss58 = v.to_base58();
+        // SCALE encode call data to bytes (pallet u8, call u8, call params).
+        let call_data_enc = Encoded(call_data);
+        // Construct our custom additional params.
+        let additional_params = (
+            runtime_version.spec_version,
+            runtime_version.transaction_version,
+            genesis_hash.genesis_hash.clone(),
+            // This should be configurable tx has a lifetime
+            genesis_hash.genesis_hash,
+        );
+        // Construct the extra param
+        let extra = (
+            extra_param.era,
+            Compact(account_nonce.next_nonce),
+            Encoded(extra_param.tip.encode()),
+        );
+        // Construct signature
+        let signature = {
+            let mut bytes = Vec::new();
+            call_data_enc.encode_to(&mut bytes);
+            extra.encode_to(&mut bytes);
+            additional_params.encode_to(&mut bytes);
+            if bytes.len() > 256 {
+                signer.sign(sp_core::blake2_256(&bytes))
+            } else {
+                signer.sign(bytes)
+            }
+        };
+        // Encode Extrinsic
+        let extrinsic = {
+            let mut encoded_inner = Vec::new();
+            // "is signed" + tx protocol v4
+            (0b10000000 + 4u8).encode_to(&mut encoded_inner);
+            // from address for signature
+            account_public_ss58.encode_to(&mut encoded_inner);
+            // the signature bytes
+            signature.encode_to(&mut encoded_inner);
+            // attach custom extra params
+            extra.encode_to(&mut encoded_inner);
+            // and now, call data
+            call_data_enc.encode_to(&mut encoded_inner);
+            // now, prefix byte length:
+            let len = Compact(
+                u32::try_from(encoded_inner.len()).expect("extrinsic size expected to be <4GB"),
+            );
+            let mut encoded = Vec::new();
+            len.encode_to(&mut encoded);
+            encoded.extend(encoded_inner);
+            encoded
+        };
+        //println!("{:?}", extrinsic);
+        // Encode extrinsic then send RPC Call
+        let extrinsic_hex = vec_to_hex_string(&extrinsic);
+        // println!("{:?}", extrinsic_hex);
+        let data = format!(
+            r#"{{"id":1,"jsonrpc":"2.0","method":"author_submitExtrinsic","params":["{}"]}}"#,
+            extrinsic_hex
+        )
+        .into_bytes();
+        let content_length = format!("{}", data.len());
+        let headers: Vec<(String, String)> = vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Content-Length".into(), content_length),
+        ];
+        extrinsic_hex
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -471,8 +695,8 @@ mod phat_rpc {
 
         #[ink::test]
         fn can_set_chain_info() {
-            use pink_extension::chain_extension::{mock, HttpResponse};
-            fat_utils::test_helper::mock_all();
+            // use pink_extension::chain_extension::{mock, HttpResponse};
+            // fat_utils::test_helper::mock_all();
             let salt = "kusama";
             // Create the attestation helpers
             let (generator, verifier) = attestation::create(salt.as_bytes());
@@ -567,6 +791,57 @@ mod phat_rpc {
                         .to_string()
                 )
             );
+        }
+
+        #[ink::test]
+        fn can_gen_transaction() {
+            pink_extension_runtime::mock_ext::mock_all_ext();
+            let account_nonce = NextNonceOk { next_nonce: 1 };
+            let genesis_hash = GenesisHashOk {
+                genesis_hash: "0xb0a8d493285c2df73290dfb7e61f870f17b41801197a149ca93654499ea3dafe"
+                    .into(),
+            };
+            let runtime_version = RuntimeVersionOk {
+                spec_name: "kusama".to_string(),
+                impl_name: "parity-kusama".to_string(),
+                authoring_version: 2,
+                spec_version: 9230,
+                impl_version: 0,
+                apis: vec![
+                    ("0xdf6acb689907609b".to_string(), 4),
+                    ("0x37e397fc7c91f5e4".to_string(), 1),
+                    ("0x40fe3ad401f8959a".to_string(), 6),
+                    ("0xd2bc9897eed08f15".to_string(), 3),
+                    ("0xf78b278be53f454c".to_string(), 2),
+                    ("0xaf2c0297a23e6d3d".to_string(), 2),
+                    ("0x49eaaf1b548a0cb0".to_string(), 1),
+                    ("0x91d5df18b0d2cf58".to_string(), 1),
+                    ("0xed99c5acb25eedf5".to_string(), 3),
+                    ("0xcbca25e39f142387".to_string(), 2),
+                    ("0x687ad44ad37f03c2".to_string(), 1),
+                    ("0xab3c0572291feb8b".to_string(), 1),
+                    ("0xbc9d89904f5b923f".to_string(), 1),
+                    ("0x37c8bb1350a9a2a8".to_string(), 1),
+                ],
+                transaction_version: 11,
+                state_version: 0,
+            };
+            let extra = ExtraParam {
+                era: Era::Immortal,
+                tip: 0,
+            };
+            let remark = "hi how are ya".encode();
+            let mut call_data = vec![0u8, 1u8];
+            call_data.extend(remark);
+
+            let result = gen_transaction(
+                account_nonce,
+                runtime_version,
+                genesis_hash,
+                call_data,
+                extra,
+            );
+            assert_eq!(1, 1);
         }
     }
 }
