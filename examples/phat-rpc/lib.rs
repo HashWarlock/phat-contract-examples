@@ -27,7 +27,7 @@ pub trait SubmittableOracle {
     fn get_genesis_hash(&self, chain: String) -> Result<attestation::Attestation, Vec<u8>>;
 
     #[ink(message)]
-    fn send_transaction(
+    fn create_transaction(
         &self,
         chain: String,
         account_nonce: NextNonceOk,
@@ -35,7 +35,10 @@ pub trait SubmittableOracle {
         genesis_hash: GenesisHashOk,
         call_data: Vec<u8>,
         extra_param: ExtraParam,
-    ) -> Result<(), Vec<u8>>;
+    ) -> Result<String, Vec<u8>>;
+
+    #[ink(message)]
+    fn send_transaction(&self, chain: String, tx_hash: String) -> Result<(), Vec<u8>>;
 }
 
 #[pink::contract(env=PinkEnvironment)]
@@ -362,7 +365,7 @@ mod phat_rpc {
         /// Compose a transaction, sign with derived account for the chain, and submit the extrinsic
         /// to the RPC Node with author_submitExtrinsic call
         #[ink(message)]
-        fn send_transaction(
+        fn create_transaction(
             &self,
             chain: String,
             account_nonce: NextNonceOk,
@@ -370,7 +373,7 @@ mod phat_rpc {
             genesis_hash: GenesisHashOk,
             call_data: Vec<u8>,
             extra_param: ExtraParam,
-        ) -> core::result::Result<(), Vec<u8>> {
+        ) -> core::result::Result<String, Vec<u8>> {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions.encode());
             }
@@ -380,10 +383,6 @@ mod phat_rpc {
             };
             let signer = match self.account_private.get(&chain) {
                 Some(signer) => signer,
-                None => return Err(Error::ChainNotConfigured.encode()),
-            };
-            let rpc_node = match self.rpc_nodes.get(&chain) {
-                Some(rpc_node) => rpc_node,
                 None => return Err(Error::ChainNotConfigured.encode()),
             };
             // SCALE encode call data to bytes (pallet u8, call u8, call params).
@@ -439,9 +438,27 @@ mod phat_rpc {
             // Encode extrinsic then send RPC Call
             //let extrinsic_enc = Encoded(extrinsic);
             let extrinsic_hex = vec_to_hex_string(&extrinsic);
+
+            Ok(extrinsic_hex)
+        }
+
+        /// Send the transaction to the chain RPC node.
+        #[ink(message)]
+        fn send_transaction(
+            &self,
+            chain: String,
+            tx_hash: String,
+        ) -> core::result::Result<(), Vec<u8>> {
+            if self.admin != self.env().caller() {
+                return Err(Error::NoPermissions.encode());
+            }
+            let rpc_node = match self.rpc_nodes.get(&chain) {
+                Some(rpc_node) => rpc_node,
+                None => return Err(Error::ChainNotConfigured.encode()),
+            };
             let data = format!(
                 r#"{{"id":1,"jsonrpc":"2.0","method":"author_submitExtrinsic","params":["{}"]}}"#,
-                extrinsic_hex
+                tx_hash
             )
             .into_bytes();
             let content_length = format!("{}", data.len());
@@ -454,7 +471,7 @@ mod phat_rpc {
             if response.status_code != 200 {
                 return Err(Error::RequestFailed.encode());
             }
-            // May need a check or a similar submit and subscribe to validate function
+
             Ok(())
         }
     }
