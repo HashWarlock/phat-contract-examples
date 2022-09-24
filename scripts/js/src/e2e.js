@@ -4,8 +4,10 @@ const crypto = require('crypto');
 const {ApiPromise, WsProvider, Keyring} = require('@polkadot/api');
 const {ContractPromise} = require('@polkadot/api-contract');
 const Phala = require('@phala/sdk');
+const hexToU8a = require('@polkadot/util');
 
 const { TxQueue, checkUntil, checkUntilEq, blockBarrier, hex } = require('./utils.js');
+const {stringToU8a} = require("@polkadot/util");
 
 const CONTRACT_NAMES = [
     //['fat_badges', 'FatBadges'],
@@ -149,8 +151,17 @@ async function main() {
                 state_version: 'u32',
             },
             'GenesisHashOk': {
-                genesis_hash: "String",
+                genesis_hash: 'String',
             },
+            'ExtraParam': {
+                era: {
+                    _enum: [
+                        'Immortal',
+                        'Mortal(u64, u64)',
+                    ]
+                },
+                tip: 'u128',
+            }
         }
     });
     const txqueue = new TxQueue(api);
@@ -176,7 +187,7 @@ async function main() {
 
     // contracts
     await deployContracts(api, txqueue, bob, artifacts, clusterId);
-    
+
     // create Fat Contract objects
     const contracts = {};
     for (const [name, contract] of Object.entries(artifacts)) {
@@ -190,14 +201,14 @@ async function main() {
     }
     console.log('Fat Contract: connected');
     const { PhatRpc } = contracts;
-    
+
     // set up the contracts
     const easyBadgeId = 0;
     const advBadgeId = 1;
     await txqueue.submit(
         api.tx.utility.batchAll([
             // set the api key & polkadot, kusama & khala RPC nodes
-            PhatRpc.tx.setApiKey({}, '349bf380-7e7c-4827-86f2-60c7d738c784'),
+            PhatRpc.tx.setApiKey({}, ''),
             PhatRpc.tx.setChainInfo({}, 'kusama'),
         ]),
         bob,
@@ -228,6 +239,7 @@ async function main() {
         'Kusama Next Nonce:',
         nextNonce.result.isOk ? nextNonce.output.toHuman() : nextNonce.result.toHuman()
     );
+    const nextNonceTx = nextNonce.result.isOk ? PhatRpc.registry.createType('NextNonceOk', nextNonce.output.asOk.data.toHex()) : null
     console.log(PhatRpc.registry.createType('NextNonceOk', nextNonce.output.asOk.data.toHex()).toHuman());
 
     // Get Runtime Version
@@ -239,6 +251,7 @@ async function main() {
         'Kusama Runtime Version:',
         runtimeVersion.result.isOk ? runtimeVersion.output.toHuman() : runtimeVersion.result.toHuman()
     );
+    let runtimeVersionTX = runtimeVersion.result.isOk ? PhatRpc.registry.createType('RuntimeVersionOk', runtimeVersion.output.asOk.data.toHex()) : null
     console.log(PhatRpc.registry.createType('RuntimeVersionOk', runtimeVersion.output.asOk.data.toHex()).toHuman());
 
     // Get Genesis Hash
@@ -250,7 +263,28 @@ async function main() {
         'Kusama Genesis Hash:',
         genesisHash.result.isOk ? genesisHash.output.toHuman() : genesisHash.result.toHuman()
     );
+    const genesisHashTx = genesisHash.result.isOk ? PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk.data.toHex()) : null
     console.log(PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk.data.toHex()).toHuman());
+    let param = stringToU8a('hi how are ya');
+    let callData = new Uint8Array([0, 1].push(param));
+    const extraParams = PhatRpc.registry.createType('ExtraParam', {
+        'era': 'Immortal',
+        'tip': 0,
+    });
+    console.log(nextNonceTx.toHuman());
+    console.log(runtimeVersionTX.toHuman());
+    console.log(genesisHashTx);
+    console.log(callData);
+    console.log(extraParams);
+    const sendTx = await PhatRpc.query['submittableOracle::createTransaction'](
+        certBob, {},
+        'kusama', nextNonceTx, runtimeVersionTX, genesisHashTx, callData, extraParams
+    );
+
+    console.log(
+        'Kusama TX hash:',
+        sendTx.result.isOk ? sendTx.output : sendTx.result.toHuman()
+    );
 
 }
 
