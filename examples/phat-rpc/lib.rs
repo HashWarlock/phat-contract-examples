@@ -385,8 +385,6 @@ mod phat_rpc {
                 Some(signer) => signer,
                 None => return Err(Error::ChainNotConfigured.encode()),
             };
-            // SCALE encode call data to bytes (pallet u8, call u8, call params).
-            let call_data_enc = Encoded(call_data);
             // Construct our custom additional params.
             let additional_params = (
                 runtime_version.spec_version,
@@ -399,18 +397,18 @@ mod phat_rpc {
             let extra = (
                 extra_param.era,
                 Compact(account_nonce.next_nonce),
-                Encoded(extra_param.tip.encode()),
+                Compact(extra_param.tip),
             );
             // Construct signature
             let signature = {
                 let mut bytes = Vec::new();
-                call_data_enc.encode_to(&mut bytes);
+                call_data.encode_to(&mut bytes);
                 extra.encode_to(&mut bytes);
                 additional_params.encode_to(&mut bytes);
                 if bytes.len() > 256 {
-                    signer.sign(sp_core_hashing::blake2_256(&bytes))
+                    signer.sign(sp_core_hashing::blake2_256(&bytes)).signature
                 } else {
-                    signer.sign(bytes)
+                    signer.sign(bytes).signature
                 }
             };
             // Encode Extrinsic
@@ -425,7 +423,7 @@ mod phat_rpc {
                 // attach custom extra params
                 extra.encode_to(&mut encoded_inner);
                 // and now, call data
-                call_data_enc.encode_to(&mut encoded_inner);
+                call_data.encode_to(&mut encoded_inner);
                 // now, prefix byte length:
                 let len = Compact(
                     u32::try_from(encoded_inner.len()).expect("extrinsic size expected to be <4GB"),
@@ -636,7 +634,7 @@ mod phat_rpc {
         v.extend(&r.as_bytes()[0..2]);
         let account_public_ss58 = v.to_base58();
         // SCALE encode call data to bytes (pallet u8, call u8, call params).
-        let call_data_enc = Encoded(call_data);
+        let call_data_enc = call_data;
         // Construct our custom additional params.
         let additional_params = (
             runtime_version.spec_version,
@@ -649,7 +647,7 @@ mod phat_rpc {
         let extra = (
             extra_param.era,
             Compact(account_nonce.next_nonce),
-            Encoded(extra_param.tip.encode()),
+            Compact(extra_param.tip),
         );
         // Construct signature
         let signature = {
@@ -658,9 +656,9 @@ mod phat_rpc {
             extra.encode_to(&mut bytes);
             additional_params.encode_to(&mut bytes);
             if bytes.len() > 256 {
-                signer.sign(sp_core_hashing::blake2_256(&bytes))
+                signer.sign(sp_core_hashing::blake2_256(&bytes)).signature
             } else {
-                signer.sign(bytes)
+                signer.sign(bytes).signature
             }
         };
         // Encode Extrinsic
@@ -682,12 +680,12 @@ mod phat_rpc {
             );
             let mut encoded = Vec::new();
             len.encode_to(&mut encoded);
-            encoded.extend(encoded_inner);
+            encoded.extend(&encoded_inner);
             encoded
         };
-        //println!("{:?}", extrinsic);
         // Encode extrinsic then send RPC Call
-        let extrinsic_hex = vec_to_hex_string(&extrinsic);
+        let extrinsic_hex = format!("0x{}", hex::encode(extrinsic));
+        //vec_to_hex_string(&extrinsic);
         // println!("{:?}", extrinsic_hex);
         let data = format!(
             r#"{{"id":1,"jsonrpc":"2.0","method":"author_submitExtrinsic","params":["{}"]}}"#,
@@ -848,9 +846,9 @@ mod phat_rpc {
                 era: Era::Immortal,
                 tip: 0,
             };
-            let remark = "hi how are ya".encode();
-            let mut call_data = vec![0u8, 1u8];
-            call_data.extend(remark);
+            let remark: Vec<u8> = "hi how are ya".as_bytes().into();
+            let call_index = [0u8, 1u8];
+            let mut call_data = [call_index.to_vec(), remark.encode()].concat();
 
             let result = gen_transaction(
                 account_nonce,
@@ -859,6 +857,7 @@ mod phat_rpc {
                 call_data,
                 extra,
             );
+
             assert_eq!(1, 1);
         }
     }
