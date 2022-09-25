@@ -1,7 +1,7 @@
 [package]
-name = "phat_rpc"
+name = "eth_holder"
 version = "0.1.0"
-authors = ["Joshua <hashwarlock@phala.network>"]
+authors = ["Hang Yin <hangyin@phala.network>"]
 edition = "2021"
 
 [profile.release.package.compiler_builtins]
@@ -21,30 +21,31 @@ ink_env = { version = "3.3.0", default-features = false }
 ink_storage = { version = "3.3.0", default-features = false }
 ink_lang = { version = "3.3.0", default-features = false }
 
-ss58-registry = { version = "1.29.0", default-features = false }
-sp-core-hashing = { version = "4.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.27", default-features = false }
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
-scale-info = { version = "2", default-features = false, features = ["derive"], optional = false }
+scale-info = { version = "2", default-features = false, features = ["derive"], optional = true }
 
 openbrush = { path = "../../vendor/openbrush-contracts", version = "~2.1.0", default-features = false }
 pink-extension = { version = "0.1.18", default-features = false }
+
+serde-json-core = { version = "0.4.0", default-features = false }
+serde = { version = "1.0.137", default-features = false, features = ["derive", "alloc"]}
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
-serde = { version = "1.0.140", default-features = false, features = ["derive", "alloc"]}
-serde-json-core = { version = "0.4.0" }
-base58 = { version = "0.2.0" }
-blake2-rfc = { version = "0.2.18", default-features = false }
-pink-utils = { version = "0.1", default-features = false }
+hex-literal = "0.3.4"
+ethereum-types = { version = "0.13.1", default-features = false, features = ["rlp"] }
+rlp = { version = "0.5", default-features = false }
+sha3 = { version = "0.10.2", default-features = false }
+
 
 [dev-dependencies]
-pink-extension-runtime = { version = "0.1.3" }
 environmental = { path = "../../utils/environmental", default-features = false }
+pink-extension-runtime = "0.1.3"
 
 [lib]
-name = "phat_rpc"
+name = "eth_holder"
 path = "lib.rs"
 crate-type = [
-    # Used for normal contract Wasm blobs.
-    "cdylib",
+	# Used for normal contract Wasm blobs.
+	"cdylib",
 ]
 
 [features]
@@ -58,7 +59,6 @@ std = [
     "scale/std",
     "scale-info/std",
     "pink-extension/std",
-    "pink-utils/std",
     "serde-json-core/std",
 ]
 ink-as-dependency = []
