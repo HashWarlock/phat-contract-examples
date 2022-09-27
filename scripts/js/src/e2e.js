@@ -161,6 +161,11 @@ async function main() {
                     ]
                 },
                 tip: 'u128',
+            },
+            'CallParam': {
+                pallet_index: 'u8',
+                pallet_call: 'u8',
+                call_data: 'Vec<u8>',
             }
         }
     });
@@ -265,20 +270,24 @@ async function main() {
     );
     const genesisHashTx = genesisHash.result.isOk ? PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk.data.toHex()) : null
     console.log(PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk.data.toHex()).toHuman());
-    let param = stringToU8a('hi how are ya');
-    let callData = new Uint8Array([0, 1].push(param));
+    const callData = stringToU8a('hi how are ya');
+    const callParam = PhatRpc.registry.createType('CallParam', {
+        pallet_index: 0,
+        pallet_call: 1,
+        call_data: callData
+    });
     const extraParams = PhatRpc.registry.createType('ExtraParam', {
         'era': 'Immortal',
         'tip': 0,
     });
     console.log(nextNonceTx.toHuman());
     console.log(runtimeVersionTX.toHuman());
-    console.log(genesisHashTx);
-    console.log(callData);
-    console.log(extraParams);
+    console.log(genesisHashTx.toHuman());
+    console.log(callData.toHuman());
+    console.log(extraParams.toHuman());
     const sendTx = await PhatRpc.query['submittableOracle::createTransaction'](
         certBob, {},
-        'kusama', nextNonceTx, runtimeVersionTX, genesisHashTx, callData, extraParams
+        'kusama', nextNonceTx, runtimeVersionTX, genesisHashTx, callParam, extraParams
     );
 
     console.log(

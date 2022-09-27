@@ -2,7 +2,7 @@
 #![feature(trace_macros)]
 
 mod era;
-use crate::phat_rpc::{ExtraParam, GenesisHashOk, NextNonceOk, RuntimeVersionOk};
+use crate::phat_rpc::{CallParam, ExtraParam, GenesisHashOk, NextNonceOk, RuntimeVersionOk};
 use ink_env::AccountId;
 use ink_lang as ink;
 use ink_prelude::{string::String, vec::Vec};
@@ -33,7 +33,7 @@ pub trait SubmittableOracle {
         account_nonce: NextNonceOk,
         runtime_version: RuntimeVersionOk,
         genesis_hash: GenesisHashOk,
-        call_data: Vec<u8>,
+        call_data: CallParam,
         extra_param: ExtraParam,
     ) -> Result<String, Vec<u8>>;
 
@@ -371,7 +371,7 @@ mod phat_rpc {
             account_nonce: NextNonceOk,
             runtime_version: RuntimeVersionOk,
             genesis_hash: GenesisHashOk,
-            call_data: Vec<u8>,
+            call_data: CallParam,
             extra_param: ExtraParam,
         ) -> core::result::Result<String, Vec<u8>> {
             if self.admin != self.env().caller() {
@@ -544,6 +544,17 @@ mod phat_rpc {
         tip: u128,
     }
 
+    #[derive(Encode, Decode, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct CallParam {
+        // pallet index
+        pallet_index: u8,
+        // pallet index call
+        pallet_call: u8,
+        // pallet call data
+        call_data: Vec<u8>,
+    }
+
     /// Wraps an already encoded byte vector, prevents being encoded as a raw byte vector as part of
     /// the transaction payload
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -610,7 +621,7 @@ mod phat_rpc {
         account_nonce: NextNonceOk,
         runtime_version: RuntimeVersionOk,
         genesis_hash: GenesisHashOk,
-        call_data: Vec<u8>,
+        call_data: CallParam,
         extra_param: ExtraParam,
     ) -> String {
         let (signer, verifier) = attestation::create(b"a spoon of salt");
@@ -686,7 +697,7 @@ mod phat_rpc {
         // Encode extrinsic then send RPC Call
         let extrinsic_hex = format!("0x{}", hex::encode(extrinsic));
         //vec_to_hex_string(&extrinsic);
-        // println!("{:?}", extrinsic_hex);
+        //println!("{:?}", extrinsic_hex);
         let data = format!(
             r#"{{"id":1,"jsonrpc":"2.0","method":"author_submitExtrinsic","params":["{}"]}}"#,
             extrinsic_hex
@@ -847,14 +858,17 @@ mod phat_rpc {
                 tip: 0,
             };
             let remark: Vec<u8> = "hi how are ya".as_bytes().into();
-            let call_index = [0u8, 1u8];
-            let mut call_data = [call_index.to_vec(), remark.encode()].concat();
+            let call_param = CallParam {
+                pallet_index: 0u8,
+                pallet_call: 1u8,
+                call_data: remark,
+            };
 
             let result = gen_transaction(
                 account_nonce,
                 runtime_version,
                 genesis_hash,
-                call_data,
+                call_param,
                 extra,
             );
 
