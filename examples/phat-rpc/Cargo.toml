@@ -29,6 +29,7 @@ scale-info = { version = "2", default-features = false, features = ["derive"], o
 openbrush = { path = "../../vendor/openbrush-contracts", version = "~2.1.0", default-features = false }
 pink-extension = { version = "0.1.18", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+hex-literal = "0.3.4"
 serde = { version = "1.0.140", default-features = false, features = ["derive", "alloc"]}
 serde-json-core = { version = "0.4.0" }
 base58 = { version = "0.2.0" }

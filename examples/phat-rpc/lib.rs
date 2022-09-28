@@ -18,13 +18,13 @@ pub trait SubmittableOracle {
     fn verifier(&self) -> attestation::Verifier;
 
     #[ink(message)]
-    fn get_next_nonce(&self, chain: String) -> Result<attestation::Attestation, Vec<u8>>;
+    fn get_next_nonce(&self, chain: String) -> Result<NextNonceOk, Vec<u8>>;
 
     #[ink(message)]
-    fn get_runtime_version(&self, chain: String) -> Result<attestation::Attestation, Vec<u8>>;
+    fn get_runtime_version(&self, chain: String) -> Result<RuntimeVersionOk, Vec<u8>>;
 
     #[ink(message)]
-    fn get_genesis_hash(&self, chain: String) -> Result<attestation::Attestation, Vec<u8>>;
+    fn get_genesis_hash(&self, chain: String) -> Result<GenesisHashOk, Vec<u8>>;
 
     #[ink(message)]
     fn create_transaction(
@@ -35,7 +35,7 @@ pub trait SubmittableOracle {
         genesis_hash: GenesisHashOk,
         call_data: CallParam,
         extra_param: ExtraParam,
-    ) -> Result<String, Vec<u8>>;
+    ) -> Result<String, crate::phat_rpc::Error>;
 
     #[ink(message)]
     fn send_transaction(&self, chain: String, tx_hash: String) -> Result<(), Vec<u8>>;
@@ -228,10 +228,7 @@ mod phat_rpc {
 
         /// Get account's next nonce on a specific chain.
         #[ink(message)]
-        fn get_next_nonce(
-            &self,
-            chain: String,
-        ) -> core::result::Result<attestation::Attestation, Vec<u8>> {
+        fn get_next_nonce(&self, chain: String) -> core::result::Result<NextNonceOk, Vec<u8>> {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions.encode());
             }
@@ -266,9 +263,9 @@ mod phat_rpc {
                 next_nonce: next_nonce.result,
             };
 
-            let result = self.attestation_generator.sign(next_nonce_ok);
+            let _result = self.attestation_generator.sign(next_nonce_ok.clone());
 
-            Ok(result)
+            Ok(next_nonce_ok)
         }
 
         /// Get the chain's runtime version.
@@ -276,7 +273,7 @@ mod phat_rpc {
         fn get_runtime_version(
             &self,
             chain: String,
-        ) -> core::result::Result<attestation::Attestation, Vec<u8>> {
+        ) -> core::result::Result<RuntimeVersionOk, Vec<u8>> {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions.encode());
             }
@@ -317,17 +314,14 @@ mod phat_rpc {
                 state_version: runtime_version_result.stateVersion,
             };
 
-            let result = self.attestation_generator.sign(runtime_version_ok);
+            let _result = self.attestation_generator.sign(runtime_version_ok.clone());
 
-            Ok(result)
+            Ok(runtime_version_ok)
         }
 
         /// Get chain's genesis hash
         #[ink(message)]
-        fn get_genesis_hash(
-            &self,
-            chain: String,
-        ) -> core::result::Result<attestation::Attestation, Vec<u8>> {
+        fn get_genesis_hash(&self, chain: String) -> core::result::Result<GenesisHashOk, Vec<u8>> {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions.encode());
             }
@@ -357,9 +351,9 @@ mod phat_rpc {
                 genesis_hash: genesis_hash.result.to_string().parse().unwrap(),
             };
 
-            let result = self.attestation_generator.sign(genesis_hash_string);
+            let _result = self.attestation_generator.sign(genesis_hash_string.clone());
 
-            Ok(result)
+            Ok(genesis_hash_string)
         }
 
         /// Compose a transaction, sign with derived account for the chain, and submit the extrinsic
@@ -373,17 +367,17 @@ mod phat_rpc {
             genesis_hash: GenesisHashOk,
             call_data: CallParam,
             extra_param: ExtraParam,
-        ) -> core::result::Result<String, Vec<u8>> {
+        ) -> core::result::Result<String, Error> {
             if self.admin != self.env().caller() {
-                return Err(Error::NoPermissions.encode());
+                return Err(Error::NoPermissions);
             }
             let account_id = match self.chain_account_id.get(&chain) {
                 Some(account_id) => account_id,
-                None => return Err(Error::ChainNotConfigured.encode()),
+                None => return Err(Error::ChainNotConfigured),
             };
-            let signer = match self.account_private.get(&chain) {
+            let signer = match self.account_private.get(&account_id) {
                 Some(signer) => signer,
-                None => return Err(Error::ChainNotConfigured.encode()),
+                None => return Err(Error::ChainNotConfigured),
             };
             // Construct our custom additional params.
             let additional_params = (
@@ -714,7 +708,10 @@ mod phat_rpc {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use hex_literal::hex;
         use ink_lang as ink;
+        use openbrush::traits::mock::{Addressable, SharedCallStack};
+        use pink::chain_extension::{mock, HttpResponse};
 
         fn default_accounts() -> ink_env::test::DefaultAccounts<PinkEnvironment> {
             ink_env::test::default_accounts::<Environment>()
@@ -873,6 +870,100 @@ mod phat_rpc {
             );
 
             assert_eq!(1, 1);
+        }
+
+        #[ink::test]
+        fn end_to_end() {
+            pink_extension_runtime::mock_ext::mock_all_ext();
+
+            let accounts = default_accounts();
+            let stack = SharedCallStack::new(accounts.alice);
+            let contract = Addressable::create_native(1, PhatRpc::new(), stack.clone());
+
+            let chain = "kusama";
+            let test_api_key = "281e1234-ec43-7826-d839-81b6c627b673";
+            let _res = contract.call_mut().set_api_key(test_api_key.to_string());
+            let get_api_key = contract.call().get_api_key().expect("okay");
+            assert_eq!(test_api_key, get_api_key);
+            //generate account
+            mock::mock_derive_sr25519_key(|_| {
+                hex!("9eb2ee60393aeeec31709e256d448c9e40fa64233abf12318f63726e9c417b69").to_vec()
+            });
+            let res = contract.call_mut().set_chain_info(chain.to_string());
+            let address = contract
+                .call()
+                .get_chain_account_id(chain.to_string())
+                .unwrap();
+            println!("addr: {:?}", address);
+            let expect_addr = "FXJFWSVDcyVi3bTy8D9ESznQM4JoNBRQLEjWFgAGnGQfpbR".to_string();
+            assert_eq!(address, expect_addr);
+
+            //get nonce
+            mock::mock_http_request(|_| {
+                HttpResponse::ok(br#"{"jsonrpc":"2.0","result":0,"id":1}"#.to_vec())
+            });
+            let nonce = contract.call().get_next_nonce(chain.to_string()).unwrap();
+            println!("nonce: {:?}", nonce.next_nonce);
+            assert_eq!(nonce.next_nonce, 0);
+
+            //get runtime version
+            mock::mock_http_request(|_| {
+                HttpResponse::ok(br#"{
+                "jsonrpc":"2.0","result":{"specName":"kusama","implName":"parity-kusama","authoringVersion":2,"specVersion":9230,"implVersion":0,"apis":[["0xdf6acb689907609b",4],["0x37e397fc7c91f5e4",1],["0x40fe3ad401f8959a",6],["0xd2bc9897eed08f15",3],["0xf78b278be53f454c",2],["0xaf2c0297a23e6d3d",2],["0x49eaaf1b548a0cb0",1],["0x91d5df18b0d2cf58",1],["0xed99c5acb25eedf5",3],["0xcbca25e39f142387",2],["0x687ad44ad37f03c2",1],["0xab3c0572291feb8b",1],["0xbc9d89904f5b923f",1],["0x37c8bb1350a9a2a8",1]],"transactionVersion":11,"stateVersion":0},"id":1
+            }"#.to_vec())
+            });
+            let runtime_version = contract
+                .call()
+                .get_runtime_version(chain.to_string())
+                .unwrap();
+            println!("runtime_version: {:?}", runtime_version);
+            //assert_eq!(gas_price, 8049999872);
+            // get genesis hash
+            mock::mock_http_request(|_| {
+                HttpResponse::ok(br#"{
+                "jsonrpc":"2.0","result":"0xb0a8d493285c2df73290dfb7e61f870f17b41801197a149ca93654499ea3dafe","id":1
+            }"#.to_vec())
+            });
+            let genesis_hash = contract.call().get_genesis_hash(chain.to_string()).unwrap();
+            println!("genesis_hash: {:?}", genesis_hash);
+            assert_eq!(
+                genesis_hash.genesis_hash,
+                "0xb0a8d493285c2df73290dfb7e61f870f17b41801197a149ca93654499ea3dafe".to_string()
+            );
+            // Extra params for transaction creation
+            let extra = ExtraParam {
+                era: Era::Immortal,
+                tip: 0,
+            };
+            // Remark Call
+            let remark: Vec<u8> = "hi how are ya".as_bytes().into();
+            let call_param = CallParam {
+                pallet_index: 0u8,
+                pallet_call: 1u8,
+                call_data: remark,
+            };
+
+            //create raw transaction
+            let tx_raw = contract
+                .call()
+                .create_transaction(
+                    chain.to_string(),
+                    nonce,
+                    runtime_version,
+                    genesis_hash,
+                    call_param,
+                    extra,
+                )
+                .unwrap();
+            println!("{:?}", tx_raw);
+            mock::mock_http_request(|_| {
+                HttpResponse::ok(br#"{"jsonrpc":"2.0","id":1,"result":"0xe670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331"}"#.to_vec())
+            });
+
+            let _resp = contract
+                .call()
+                .send_transaction(chain.to_string(), tx_raw)
+                .unwrap();
         }
     }
 }

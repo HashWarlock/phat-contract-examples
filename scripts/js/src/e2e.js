@@ -244,8 +244,8 @@ async function main() {
         'Kusama Next Nonce:',
         nextNonce.result.isOk ? nextNonce.output.toHuman() : nextNonce.result.toHuman()
     );
-    const nextNonceTx = nextNonce.result.isOk ? PhatRpc.registry.createType('NextNonceOk', nextNonce.output.asOk.data.toHex()) : null
-    console.log(PhatRpc.registry.createType('NextNonceOk', nextNonce.output.asOk.data.toHex()).toHuman());
+    const nextNonceTx = nextNonce.result.isOk ? PhatRpc.registry.createType('NextNonceOk', nextNonce.output.asOk) : null
+    console.log(PhatRpc.registry.createType('NextNonceOk', nextNonce.output.asOk).toHuman());
 
     // Get Runtime Version
     const runtimeVersion = await PhatRpc.query['submittableOracle::getRuntimeVersion'](
@@ -256,8 +256,8 @@ async function main() {
         'Kusama Runtime Version:',
         runtimeVersion.result.isOk ? runtimeVersion.output.toHuman() : runtimeVersion.result.toHuman()
     );
-    let runtimeVersionTX = runtimeVersion.result.isOk ? PhatRpc.registry.createType('RuntimeVersionOk', runtimeVersion.output.asOk.data.toHex()) : null
-    console.log(PhatRpc.registry.createType('RuntimeVersionOk', runtimeVersion.output.asOk.data.toHex()).toHuman());
+    let runtimeVersionTX = runtimeVersion.result.isOk ? PhatRpc.registry.createType('RuntimeVersionOk', runtimeVersion.output.asOk) : null
+    console.log(PhatRpc.registry.createType('RuntimeVersionOk', runtimeVersion.output.asOk).toHuman());
 
     // Get Genesis Hash
     const genesisHash = await PhatRpc.query['submittableOracle::getGenesisHash'](
@@ -268,9 +268,9 @@ async function main() {
         'Kusama Genesis Hash:',
         genesisHash.result.isOk ? genesisHash.output.toHuman() : genesisHash.result.toHuman()
     );
-    const genesisHashTx = genesisHash.result.isOk ? PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk.data.toHex()) : null
-    console.log(PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk.data.toHex()).toHuman());
-    const callData = stringToU8a('hi how are ya');
+    const genesisHashTx = genesisHash.result.isOk ? PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk) : null
+    console.log(PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk).toHuman());
+    let callData = PhatRpc.registry.createType('Vec<u8>', 'hi how are ya');
     const callParam = PhatRpc.registry.createType('CallParam', {
         pallet_index: 0,
         pallet_call: 1,
@@ -283,16 +283,21 @@ async function main() {
     console.log(nextNonceTx.toHuman());
     console.log(runtimeVersionTX.toHuman());
     console.log(genesisHashTx.toHuman());
-    console.log(callData.toHuman());
+    console.log(callParam.toHuman());
     console.log(extraParams.toHuman());
     const sendTx = await PhatRpc.query['submittableOracle::createTransaction'](
         certBob, {},
-        'kusama', nextNonceTx, runtimeVersionTX, genesisHashTx, callParam, extraParams
+        'kusama',
+        nextNonceTx,
+        runtimeVersionTX,
+        genesisHashTx,
+        callParam,
+        extraParams
     );
 
     console.log(
         'Kusama TX hash:',
-        sendTx.result.isOk ? sendTx.output : sendTx.result.toHuman()
+        sendTx.result.isOk ? sendTx.output.toHuman() : sendTx.result.toHuman()
     );
 
 }
