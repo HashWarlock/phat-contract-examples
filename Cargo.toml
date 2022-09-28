@@ -2,6 +2,7 @@
 resolver = "2"
 
 members = [
+    "examples/phat-gm",
     "examples/phat-rpc",
     "utils/environmental",
 ]

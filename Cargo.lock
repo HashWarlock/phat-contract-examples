@@ -1631,6 +1631,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "phat_gm"
+version = "0.0.24"
+dependencies = [
+ "base58",
+ "blake2-rfc",
+ "environmental 1.1.3",
+ "hex",
+ "hex-literal",
+ "ink_env",
+ "ink_lang",
+ "ink_metadata",
+ "ink_prelude",
+ "ink_primitives",
+ "ink_storage",
+ "openbrush",
+ "parity-scale-codec",
+ "pink-extension",
+ "pink-extension-runtime",
+ "pink-utils",
+ "scale-info",
+ "serde",
+ "serde-json-core",
+ "sp-core-hashing 4.0.0 (git+https://github.com/paritytech/substrate.git?branch=polkadot-v0.9.27)",
+ "ss58-registry",
+]
+
+[[package]]
 name = "phat_rpc"
 version = "0.1.0"
 dependencies = [

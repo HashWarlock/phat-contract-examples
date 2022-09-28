@@ -118,9 +118,12 @@ mod phat_rpc {
         /// Set the RPC node for parachain.
         #[ink(message)]
         pub fn set_chain_info(&mut self, chain: String) -> core::result::Result<(), Error> {
-            if self.admin != self.env().caller() {
+            let caller = self.env().caller();
+            if self.admin != caller {
                 return Err(Error::NoPermissions);
             }
+
+            let salt = caller.as_ref();
             if !self.is_api_key_set {
                 return Err(Error::ApiKeyNotSet);
             }
@@ -129,9 +132,8 @@ mod phat_rpc {
                 "https://{}.api.onfinality.io/rpc?apikey={}",
                 chain, self.api_key
             );
-            let salt = chain.clone();
             // Create the attestation helpers
-            let (generator, verifier) = attestation::create(salt.as_bytes());
+            let (generator, verifier) = attestation::create(salt);
             let account_public: &[u8] = &verifier.pubkey;
             //let account_public_ss58 = account_public.to_base58();
             let version = match Ss58AddressFormat::try_from(chain.as_str()) {
