@@ -2,9 +2,8 @@
 #![feature(trace_macros)]
 
 mod era;
-use crate::phat_gm::{
-    CallParam, Coooooins, Error, ExtraParam, GenesisHashOk, NextNonceOk, RuntimeVersionOk,
-};
+
+use crate::phat_gm::{CurrencyId, Error, ExtraParam, GenesisHashOk, NextNonceOk, RuntimeVersionOk};
 use ink_env::AccountId;
 use ink_lang as ink;
 use ink_prelude::{string::String, vec::Vec};
@@ -31,8 +30,8 @@ pub trait SubmittableOracle {
     #[ink(message)]
     fn create(
         &self,
-        dest: String,
-        token: Coooooins,
+        dest: AccountId,
+        token: CurrencyId,
         amount: u128,
         account_nonce: NextNonceOk,
         runtime_version: RuntimeVersionOk,
@@ -51,7 +50,9 @@ mod phat_gm {
     use crate::era::Era;
     use pink::{http_post, PinkEnvironment};
 
+    use crate::ink;
     use base58::ToBase58;
+    use core::fmt::Display;
     use core::fmt::Write;
     use ink_prelude::{
         borrow::ToOwned,
@@ -285,8 +286,8 @@ mod phat_gm {
         #[ink(message)]
         fn create(
             &self,
-            dest: String,
-            token: Coooooins,
+            dest: AccountId,
+            token: CurrencyId,
             amount: u128,
             account_nonce: NextNonceOk,
             runtime_version: RuntimeVersionOk,
@@ -297,22 +298,33 @@ mod phat_gm {
                 return Err(Error::NoPermissions);
             }
             let account_id = self.chain_account_id.clone();
+            let account_id_vec = match self.account_public.get(&account_id) {
+                Some(verifier) => verifier.pubkey,
+                None => return Err(Error::NoGMAccountDetected),
+            };
+
+            println!("{:?}", account_id_vec);
+
+            let raw_account: MultiAddress<AccountId, u32> =
+                MultiAddress::Raw(account_id_vec.clone());
+            //let src_account_id: Vec<u8> = account_id.as_bytes().into();
             let signer = match self.account_private.get(&account_id) {
                 Some(signer) => signer,
                 None => return Err(Error::NoGMAccountDetected),
             };
-            let call_data = {
-                let mut call_bytes = Vec::new();
-                dest.encode_to(&mut call_bytes);
-                token.encode_to(&mut call_bytes);
-                amount.encode_to(&mut call_bytes);
-                call_bytes
+
+            let raw_call_data = UnsignedExtrinsic {
+                pallet_id: 0x0d,
+                call_id: 0x00,
+                call: Transfer {
+                    dest: MultiAddress::Raw(account_id_vec),
+                    currency_id: token,
+                    amount: Compact(amount),
+                },
             };
-            let call_param = CallParam {
-                pallet_index: 13u8,
-                pallet_call: 0u8,
-                call_data,
-            };
+
+            println!("{:?}", vec_to_hex_string(&raw_call_data.encode()));
+
             // Construct our custom additional params.
             let additional_params = (
                 runtime_version.spec_version,
@@ -322,36 +334,43 @@ mod phat_gm {
                 genesis_hash.genesis_hash,
             );
             // Construct the extra param
-            let extra = (
-                extra_param.era,
-                Compact(account_nonce.next_nonce),
-                Compact(extra_param.tip),
-            );
+            let extra = Extra {
+                era: extra_param.era,
+                nonce: Compact(account_nonce.next_nonce),
+                tip: Compact(extra_param.tip),
+            };
+            let payload = (&raw_call_data, &extra, &additional_params);
             // Construct signature
             let signature = {
                 let mut bytes = Vec::new();
-                call_param.encode_to(&mut bytes);
-                extra.encode_to(&mut bytes);
-                additional_params.encode_to(&mut bytes);
+                payload.encode_to(&mut bytes);
                 if bytes.len() > 256 {
                     signer.sign(sp_core_hashing::blake2_256(&bytes)).signature
                 } else {
                     signer.sign(bytes).signature
                 }
             };
+
+            let extr_sig = SignedExtrinsic {
+                address: raw_account,
+                signature,
+                extra,
+                call: raw_call_data,
+            };
             // Encode Extrinsic
             let extrinsic = {
                 let mut encoded_inner = Vec::new();
                 // "is signed" + tx protocol v4
                 (0b10000000 + 4u8).encode_to(&mut encoded_inner);
+                extr_sig.encode_to(&mut encoded_inner);
                 // from address for signature
-                account_id.encode_to(&mut encoded_inner);
-                // the signature bytes
-                signature.encode_to(&mut encoded_inner);
-                // attach custom extra params
-                extra.encode_to(&mut encoded_inner);
-                // and now, call data
-                call_param.encode_to(&mut encoded_inner);
+                // raw_account.encode_to(&mut encoded_inner);
+                // // the signature bytes
+                // signature.encode_to(&mut encoded_inner);
+                // // attach custom extra params
+                // extra.encode_to(&mut encoded_inner);
+                // // and now, call data
+                // raw_call_data.encode_to(&mut encoded_inner);
                 // now, prefix byte length:
                 let len = Compact(
                     u32::try_from(encoded_inner.len()).expect("extrinsic size expected to be <4GB"),
@@ -468,25 +487,6 @@ mod phat_gm {
         call_data: Vec<u8>,
     }
 
-    #[derive(Encode, Decode, PartialEq, Eq, Clone, Copy, Debug)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub enum Coooooins {
-        FREN,
-        GM,
-        GN,
-    }
-
-    /// Wraps an already encoded byte vector, prevents being encoded as a raw byte vector as part of
-    /// the transaction payload
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct Encoded(pub Vec<u8>);
-
-    impl scale::Encode for Encoded {
-        fn encode(&self) -> Vec<u8> {
-            self.0.to_owned()
-        }
-    }
-
     fn call_rpc(rpc_node: &String, data: Vec<u8>) -> Result<Vec<u8>> {
         let content_length = format!("{}", data.len());
         let headers: Vec<(String, String)> = vec![
@@ -518,6 +518,72 @@ mod phat_gm {
         context.update(PREFIX);
         context.update(data);
         context.finalize()
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    struct UnsignedExtrinsic<Call> {
+        pallet_id: u8,
+        call_id: u8,
+        call: Call,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    struct Transfer {
+        dest: MultiAddress<AccountId, u32>,
+        currency_id: CurrencyId,
+        amount: Compact<Balance>,
+    }
+
+    #[derive(Encode, Decode, Clone, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct Extra {
+        // 0 if Immortal, or Vec<u64, u64> for period and the phase.
+        era: Era,
+        // Nonce
+        nonce: Compact<u64>,
+        // Tip for the block producer.
+        tip: Compact<u128>,
+    }
+
+    /// A multi-format address wrapper for on-chain accounts.
+    #[derive(Encode, Decode, PartialEq, Eq, Clone, Debug, scale_info::TypeInfo)]
+    #[cfg_attr(feature = "std", derive(Hash))]
+    pub enum MultiAddress<AccountId, AccountIndex> {
+        /// It's an account ID (pubkey).
+        Id(AccountId),
+        /// It's an account index.
+        Index(#[codec(compact)] AccountIndex),
+        /// It's some arbitrary raw bytes.
+        Raw(Vec<u8>),
+        /// It's a 32 byte representation.
+        Address32([u8; 32]),
+        /// Its a 20 byte representation.
+        Address20([u8; 20]),
+    }
+
+    impl<AccountId, AccountIndex> From<AccountId> for MultiAddress<AccountId, AccountIndex> {
+        fn from(a: AccountId) -> Self {
+            Self::Id(a)
+        }
+    }
+
+    #[derive(Encode, Decode, PartialEq, Eq, Clone, Copy, Debug)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum CurrencyId {
+        FREN,
+        GM,
+        GN,
+    }
+
+    #[derive(Encode, Decode, PartialEq, Eq, Clone, Debug)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct SignedExtrinsic {
+        address: MultiAddress<AccountId, u32>,
+        signature: Vec<u8>,
+        extra: Extra,
+        call: UnsignedExtrinsic<Transfer>,
     }
 
     #[cfg(test)]
@@ -592,8 +658,8 @@ mod phat_gm {
             let tx_raw = contract
                 .call()
                 .create(
-                    "gMXKiiBHQNaaxj48rbP4mb2EQARurqLRUn3MAH6YSveh8WExz".to_string(),
-                    Coooooins::GM,
+                    accounts.bob,
+                    CurrencyId::GM,
                     1u128,
                     nonce,
                     runtime_version,

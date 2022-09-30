@@ -2,6 +2,8 @@
 
 ## Send a Remark to a Substrate Based Chain
 
+### [Spec Polkadot Network](https://spec.polkadot.network/#_extrinsics)
+
 Create an unsigned payload with the following information:
 - `system_accountNextIndex`
     - `nonce` for account
