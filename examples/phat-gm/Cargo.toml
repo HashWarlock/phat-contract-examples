@@ -56,6 +56,7 @@ std = [
     "ink_storage/std",
     "ink_primitives/std",
     "openbrush/std",
+    "openbrush/mockable",
     "scale/std",
     "scale-info/std",
     "pink-extension/std",
