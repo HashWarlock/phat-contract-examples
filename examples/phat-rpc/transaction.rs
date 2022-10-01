@@ -26,17 +26,6 @@ struct Transfer {
     amount: Compact<u128>,
 }
 
-#[derive(Encode, Decode, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-pub struct Extra {
-    // 0 if Immortal, or Vec<u64, u64> for period and the phase.
-    era: Era,
-    // Nonce
-    nonce: Compact<u64>,
-    // Tip for the block producer.
-    tip: Compact<u128>,
-}
-
 /// A multi-format address wrapper for on-chain accounts.
 #[derive(Encode, Decode, PartialEq, Eq, Clone, Debug, scale_info::TypeInfo)]
 #[cfg_attr(feature = "std", derive(Hash))]
@@ -87,21 +76,4 @@ pub enum MultiSignature {
     Sr25519(Signature),
     /// An ECDSA/SECP256k1 signature.
     Ecdsa(Signature),
-}
-
-#[derive(Encode, Decode, PartialEq, Eq, Clone, Copy, Debug)]
-#[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-pub enum CurrencyId {
-    FREN,
-    GM,
-    GN,
-}
-
-#[derive(Encode, Decode, PartialEq, Eq, Clone, Debug)]
-#[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-pub struct SignedExtrinsic {
-    address: MultiAddress<AccountId, u32>,
-    signature: Vec<u8>,
-    extra: Extra,
-    call: UnsignedExtrinsic<Transfer>,
 }

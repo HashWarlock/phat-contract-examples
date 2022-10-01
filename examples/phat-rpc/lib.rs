@@ -415,8 +415,7 @@ mod phat_rpc {
                 encoded
             };
             // Encode extrinsic then send RPC Call
-            let extrinsic_enc = extrinsic;
-            let extrinsic_hex = vec_to_hex_string(&extrinsic_enc);
+            let extrinsic_hex = vec_to_hex_string(&extrinsic);
 
             Ok(extrinsic_hex)
         }

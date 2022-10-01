@@ -218,6 +218,9 @@ async function main() {
             // set the api key & polkadot, kusama & khala RPC nodes
             PhatRpc.tx.setApiKey({}, ''),
             PhatRpc.tx.setChainInfo({}, 'kusama'),
+            PhatRpc.tx.setChainInfo({}, 'astar'),
+            PhatRpc.tx.setChainInfo({}, 'karura'),
+            PhatRpc.tx.setChainInfo({}, 'pioneer'),
         ]),
         bob,
         true,
@@ -273,13 +276,11 @@ async function main() {
     );
     const genesisHashTx = genesisHash.result.isOk ? PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk) : null
     console.log(PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk).toHuman());
-    let callData = PhatRpc.registry.createType('Vec<u8>', 'hi how are ya');
+    const remark = PhatRpc.registry.createType('Remark', { remark: 'Phala Phat Contract ID [0xd3a180775a064ca68d9e867f8e9377f49881275e45e02bd66c557caf981aab98] was here :P - hashwarlock'});
     const callParam = PhatRpc.registry.createType('UnsignedExtrinsic', {
         pallet_id: 0,
         call_id: 1,
-        call: {
-            remark: 'hi how are ya',
-        }
+        call: remark
     });
     const extraParams = PhatRpc.registry.createType('ExtraParam', {
         'era': 'Immortal',
@@ -292,7 +293,7 @@ async function main() {
     console.log(extraParams.toHuman());
     const sendTx = await PhatRpc.query['submittableOracle::createTransaction'](
         certBob, {},
-        'GJPLYrZBk7qiwku23fHQUtS2wjU5PKvhSS56uL8ma6zhtBD',
+        'FrJ5yoKatvkPFyiNmS3ChWF2LrvE9AsBmBvuM78tiAeqwUk',
         'kusama',
         nextNonceTx,
         runtimeVersionTX,
@@ -304,6 +305,18 @@ async function main() {
     console.log(
         'Kusama TX hash:',
         sendTx.result.isOk ? sendTx.output.toHuman() : sendTx.result.toHuman()
+    );
+
+    const txHash = sendTx.output;
+    const sendExtrinsic = await PhatRpc.query['submittableOracle::sendTransaction'](
+        certBob, {},
+        'kusama',
+        txHash
+    );
+
+    console.log(
+        'Kusama Extrinisc Sent:',
+        sendExtrinsic.result.isOk ? sendExtrinsic.output.toHuman() : sendExtrinsic.result.toHuman()
     );
 
 }
