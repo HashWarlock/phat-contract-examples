@@ -1,7 +1,7 @@
 use crate::era::Era;
 use ink_env::AccountId;
 use ink_prelude::{string::String, vec::Vec};
-use scale::{Compact, Decode, Encode, MaxEncodedLen};
+use scale::{Compact, Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -60,7 +60,7 @@ impl<AccountId, AccountIndex> From<AccountId> for MultiAddress<AccountId, Accoun
 }
 
 /// A signature (a 512-bit value).
-#[derive(Encode, Decode, MaxEncodedLen, Clone, Debug, scale_info::TypeInfo, PartialEq, Eq)]
+#[derive(Encode, Decode, Clone, Debug, scale_info::TypeInfo, PartialEq, Eq)]
 #[cfg_attr(feature = "std", derive(Hash))]
 pub struct Signature(pub [u8; 64]);
 
