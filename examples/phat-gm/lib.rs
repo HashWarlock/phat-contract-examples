@@ -30,6 +30,7 @@ pub trait SubmittableOracle {
     #[ink(message)]
     fn create(
         &self,
+        src: AccountId,
         dest: AccountId,
         token: CurrencyId,
         amount: u128,
@@ -286,6 +287,7 @@ mod phat_gm {
         #[ink(message)]
         fn create(
             &self,
+            src: AccountId,
             dest: AccountId,
             token: CurrencyId,
             amount: u128,
@@ -303,10 +305,7 @@ mod phat_gm {
                 None => return Err(Error::NoGMAccountDetected),
             };
 
-            println!("{:?}", account_id_vec);
-
-            let raw_account: MultiAddress<AccountId, u32> =
-                MultiAddress::Raw(account_id_vec.clone());
+            let raw_account: MultiAddress<AccountId, u32> = MultiAddress::Id(src);
             //let src_account_id: Vec<u8> = account_id.as_bytes().into();
             let signer = match self.account_private.get(&account_id) {
                 Some(signer) => signer,
@@ -323,7 +322,7 @@ mod phat_gm {
                 },
             };
 
-            println!("{:?}", vec_to_hex_string(&raw_call_data.encode()));
+            //println!("{:?}", vec_to_hex_string(&raw_call_data.encode()));
 
             // Construct our custom additional params.
             let additional_params = (
@@ -339,7 +338,7 @@ mod phat_gm {
                 nonce: Compact(account_nonce.next_nonce),
                 tip: Compact(extra_param.tip),
             };
-            let payload = (&raw_call_data, &extra, &additional_params);
+            let payload = (&raw_call_data.encode(), &extra, &additional_params);
             // Construct signature
             let signature = {
                 let mut bytes = Vec::new();
@@ -569,6 +568,17 @@ mod phat_gm {
         }
     }
 
+    #[derive(Encode, Decode, PartialEq, Eq, Clone, Debug, scale_info::TypeInfo)]
+    #[cfg_attr(feature = "std", derive(Hash))]
+    pub enum MultiSignature<Signature> {
+        /// An Ed25519 signature.
+        Ed25519(Signature),
+        /// An Sr25519 signature.
+        Sr25519(Signature),
+        /// An ECDSA/SECP256k1 signature.
+        Ecdsa(Signature),
+    }
+
     #[derive(Encode, Decode, PartialEq, Eq, Clone, Copy, Debug)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum CurrencyId {
@@ -658,6 +668,7 @@ mod phat_gm {
             let tx_raw = contract
                 .call()
                 .create(
+                    accounts.alice,
                     accounts.bob,
                     CurrencyId::GM,
                     1u128,
