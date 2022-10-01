@@ -57,7 +57,7 @@ mod phat_rpc {
     use pink::{http_post, PinkEnvironment};
 
     use crate::transaction;
-    use crate::transaction::{MultiAddress, Remark, UnsignedExtrinsic};
+    use crate::transaction::{MultiAddress, MultiSignature, Remark, Signature, UnsignedExtrinsic};
     use base58::ToBase58;
     use core::fmt::Write;
     use ink_prelude::{
@@ -145,7 +145,6 @@ mod phat_rpc {
             // Create the attestation helpers
             let (generator, verifier) = attestation::create(salt);
             let account_public: &[u8] = &verifier.pubkey;
-            //let account_public_ss58 = account_public.to_base58();
             let version = match Ss58AddressFormat::try_from(chain.as_str()) {
                 Ok(version) => version,
                 Err(_e) => return Err(Error::InvalidAccount),
@@ -389,6 +388,10 @@ mod phat_rpc {
                     signer.sign(bytes).signature
                 }
             };
+            let signature_bytes: &[u8] = &signature;
+            let signature_type =
+                Signature::try_from(signature_bytes).or(Err(Error::InvalidSignature))?;
+            let multi_signature = MultiSignature::Sr25519(signature_type);
             // Encode Extrinsic
             let extrinsic = {
                 let mut encoded_inner = Vec::new();
@@ -397,7 +400,7 @@ mod phat_rpc {
                 // from address for signature
                 src_account_id.encode_to(&mut encoded_inner);
                 // the signature bytes
-                signature.encode_to(&mut encoded_inner);
+                multi_signature.encode_to(&mut encoded_inner);
                 // attach custom extra params
                 extra.encode_to(&mut encoded_inner);
                 // and now, call data

@@ -1,7 +1,7 @@
 use crate::era::Era;
 use ink_env::AccountId;
 use ink_prelude::{string::String, vec::Vec};
-use scale::{Compact, Decode, Encode, Error, Input, Output};
+use scale::{Compact, Decode, Encode, MaxEncodedLen};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -59,9 +59,28 @@ impl<AccountId, AccountIndex> From<AccountId> for MultiAddress<AccountId, Accoun
     }
 }
 
+/// A signature (a 512-bit value).
+#[derive(Encode, Decode, MaxEncodedLen, Clone, Debug, scale_info::TypeInfo, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Hash))]
+pub struct Signature(pub [u8; 64]);
+
+impl TryFrom<&[u8]> for Signature {
+    type Error = ();
+
+    fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
+        if data.len() == 64 {
+            let mut inner = [0u8; 64];
+            inner.copy_from_slice(data);
+            Ok(Signature(inner))
+        } else {
+            Err(())
+        }
+    }
+}
+
 #[derive(Encode, Decode, PartialEq, Eq, Clone, Debug, scale_info::TypeInfo)]
 #[cfg_attr(feature = "std", derive(Hash))]
-pub enum MultiSignature<Signature> {
+pub enum MultiSignature {
     /// An Ed25519 signature.
     Ed25519(Signature),
     /// An Sr25519 signature.
