@@ -316,7 +316,7 @@ mod phat_gm {
                 pallet_id: 0x0d,
                 call_id: 0x00,
                 call: Transfer {
-                    dest: MultiAddress::Raw(account_id_vec),
+                    dest: MultiAddress::Id(dest),
                     currency_id: token,
                     amount: Compact(amount),
                 },
@@ -338,7 +338,7 @@ mod phat_gm {
                 nonce: Compact(account_nonce.next_nonce),
                 tip: Compact(extra_param.tip),
             };
-            let payload = (&raw_call_data.encode(), &extra, &additional_params);
+            let payload = (&raw_call_data, &extra, &additional_params);
             // Construct signature
             let signature = {
                 let mut bytes = Vec::new();
@@ -350,26 +350,26 @@ mod phat_gm {
                 }
             };
 
-            let extr_sig = SignedExtrinsic {
-                address: raw_account,
-                signature,
-                extra,
-                call: raw_call_data,
-            };
+            // let extr_sig = SignedExtrinsic {
+            //     address: raw_account,
+            //     signature,
+            //     extra,
+            //     call: raw_call_data,
+            // };
             // Encode Extrinsic
             let extrinsic = {
                 let mut encoded_inner = Vec::new();
                 // "is signed" + tx protocol v4
                 (0b10000000 + 4u8).encode_to(&mut encoded_inner);
-                extr_sig.encode_to(&mut encoded_inner);
+                //extr_sig.encode_to(&mut encoded_inner);
                 // from address for signature
-                // raw_account.encode_to(&mut encoded_inner);
-                // // the signature bytes
-                // signature.encode_to(&mut encoded_inner);
-                // // attach custom extra params
-                // extra.encode_to(&mut encoded_inner);
-                // // and now, call data
-                // raw_call_data.encode_to(&mut encoded_inner);
+                raw_account.encode_to(&mut encoded_inner);
+                // the signature bytes
+                signature.encode_to(&mut encoded_inner);
+                // attach custom extra params
+                extra.encode_to(&mut encoded_inner);
+                // and now, call data
+                raw_call_data.encode_to(&mut encoded_inner);
                 // now, prefix byte length:
                 let len = Compact(
                     u32::try_from(encoded_inner.len()).expect("extrinsic size expected to be <4GB"),
