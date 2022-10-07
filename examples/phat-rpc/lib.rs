@@ -39,13 +39,13 @@ pub trait SubmittableOracle {
         genesis_hash: GenesisHashOk,
         call_data: UnsignedExtrinsic<Remark>,
         extra_param: ExtraParam,
-    ) -> Result<String, crate::phat_rpc::Error>;
+    ) -> Result<Vec<u8>, crate::phat_rpc::Error>;
 
     #[ink(message)]
     fn send_transaction(
         &self,
         chain: String,
-        tx_hash: String,
+        tx_hash: Vec<u8>,
     ) -> Result<String, crate::phat_rpc::Error>;
 }
 
@@ -54,7 +54,7 @@ mod phat_rpc {
     use super::pink;
     use super::SubmittableOracle;
     use crate::era::Era;
-    use pink::{http_post, PinkEnvironment};
+    use pink::{chain_extension::signing::sign, http_post, PinkEnvironment};
 
     use crate::transaction;
     use crate::transaction::{MultiAddress, MultiSignature, Remark, Signature, UnsignedExtrinsic};
@@ -69,6 +69,7 @@ mod phat_rpc {
     };
     use ink_storage::traits::SpreadAllocate;
     use ink_storage::Mapping;
+    use pink_extension::chain_extension::SigType;
     use pink_utils::attestation;
     use scale::{Compact, Decode, Encode};
     use serde::Deserialize;
@@ -328,13 +329,13 @@ mod phat_rpc {
             let (genesis_hash, _): (GenesisHash, usize) =
                 serde_json_core::from_slice(&resp_body).or(Err(Error::InvalidBody))?;
 
-            let genesis_hash_string = GenesisHashOk {
-                genesis_hash: genesis_hash.result.to_string().parse().unwrap(),
+            let genesis_hash_ok = GenesisHashOk {
+                genesis_hash: from_hex(genesis_hash.result).or(Err(Error::InvalidBody))?,
             };
 
-            let _result = self.attestation_generator.sign(genesis_hash_string.clone());
+            let _result = self.attestation_generator.sign(genesis_hash_ok.clone());
 
-            Ok(genesis_hash_string)
+            Ok(genesis_hash_ok)
         }
 
         /// Compose a transaction, sign with derived account for the chain, and submit the extrinsic
@@ -349,7 +350,7 @@ mod phat_rpc {
             genesis_hash: GenesisHashOk,
             call_data: UnsignedExtrinsic<Remark>,
             extra_param: ExtraParam,
-        ) -> core::result::Result<String, Error> {
+        ) -> core::result::Result<Vec<u8>, Error> {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
@@ -357,18 +358,21 @@ mod phat_rpc {
                 Some(account_id) => account_id,
                 None => return Err(Error::ChainNotConfigured),
             };
-            let src_account_id: MultiAddress<AccountId, u32> = transaction::MultiAddress::Id(src);
+            let src_account_id: MultiAddress<AccountId> = transaction::MultiAddress::Id(src);
             let signer = match self.account_private.get(&account_id) {
                 Some(signer) => signer,
                 None => return Err(Error::ChainNotConfigured),
             };
+            let genesis_hash_vec = genesis_hash.genesis_hash;
+            //let genesis_hash_raw = genesis_hash_vec[..];
+
             // Construct our custom additional params.
             let additional_params = (
                 runtime_version.spec_version,
                 runtime_version.transaction_version,
-                genesis_hash.genesis_hash.clone(),
+                genesis_hash_vec.clone(),
                 // This should be configurable tx has a lifetime
-                genesis_hash.genesis_hash,
+                genesis_hash_vec,
             );
             // Construct the extra param
             let extra = (
@@ -383,9 +387,13 @@ mod phat_rpc {
                 extra.encode_to(&mut bytes);
                 additional_params.encode_to(&mut bytes);
                 if bytes.len() > 256 {
-                    signer.sign(sp_core_hashing::blake2_256(&bytes)).signature
+                    sign(
+                        &sp_core_hashing::blake2_256(&bytes),
+                        &signer.privkey,
+                        SigType::Sr25519,
+                    )
                 } else {
-                    signer.sign(bytes).signature
+                    sign(&bytes, &signer.privkey, SigType::Sr25519)
                 }
             };
             let signature_bytes: &[u8] = &signature;
@@ -415,9 +423,9 @@ mod phat_rpc {
                 encoded
             };
             // Encode extrinsic then send RPC Call
-            let extrinsic_hex = vec_to_hex_string(&extrinsic);
+            //let extrinsic_hex = vec_to_hex_string(&extrinsic);
 
-            Ok(extrinsic_hex)
+            Ok(extrinsic)
         }
 
         /// Send the transaction to the chain RPC node.
@@ -425,18 +433,29 @@ mod phat_rpc {
         fn send_transaction(
             &self,
             chain: String,
-            tx_hash: String,
+            tx_hash: Vec<u8>,
         ) -> core::result::Result<String, Error> {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
+            // let account_id = match self.chain_account_id.get(&chain) {
+            //     Some(account_id) => account_id,
+            //     None => return Err(Error::ChainNotConfigured),
+            // };
+            // let verifier = match self.account_public.get(&account_id) {
+            //     Some(verifier) => verifier,
+            //     None => return Err(Error::ChainNotConfigured),
+            // };
             let rpc_node = match self.rpc_nodes.get(&chain) {
                 Some(rpc_node) => rpc_node,
                 None => return Err(Error::ChainNotConfigured),
             };
+            let tx_hex = vec_to_hex_string(&tx_hash);
+            // println!("{:?}", tx_raw);
+
             let data = format!(
                 r#"{{"id":1,"jsonrpc":"2.0","method":"author_submitExtrinsic","params":["{}"]}}"#,
-                tx_hash
+                tx_hex
             )
             .into_bytes();
             let resp_body = call_rpc(&rpc_node, data)?;
@@ -504,7 +523,7 @@ mod phat_rpc {
     #[derive(Encode, Decode, Clone, Debug)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub struct GenesisHashOk {
-        genesis_hash: String,
+        genesis_hash: Vec<u8>,
     }
 
     #[derive(Encode, Decode, Clone, Debug, PartialEq)]
@@ -525,6 +544,84 @@ mod phat_rpc {
         fn encode(&self) -> Vec<u8> {
             self.0.to_owned()
         }
+    }
+
+    /// Decoding bytes from hex string error.
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum FromHexError {
+        /// The `0x` prefix is missing.
+        MissingPrefix,
+        /// Invalid (non-hex) character encountered.
+        InvalidHex {
+            /// The unexpected character.
+            character: char,
+            /// Index of that occurrence.
+            index: usize,
+        },
+    }
+
+    impl core::fmt::Display for FromHexError {
+        fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
+            match *self {
+                Self::MissingPrefix => write!(fmt, "0x prefix is missing"),
+                Self::InvalidHex { character, index } => {
+                    write!(fmt, "invalid hex character: {}, at {}", character, index)
+                }
+            }
+        }
+    }
+
+    /// Decode given hex string into a vector of bytes.
+    ///
+    /// Returns an error if the string is not prefixed with `0x`
+    /// or non-hex characters are present.
+    pub fn from_hex(v: &str) -> core::result::Result<Vec<u8>, FromHexError> {
+        if !v.starts_with("0x") {
+            return Err(FromHexError::MissingPrefix);
+        }
+
+        let mut bytes = vec![0u8; (v.len() - 1) / 2];
+        from_hex_raw(v, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// Decode given 0x-prefixed hex string into provided slice.
+    /// Used internally by `from_hex` and `deserialize_check_len`.
+    ///
+    /// The method will panic if:
+    /// 1. `v` is shorter than 2 characters (you need to check 0x prefix outside).
+    /// 2. `bytes` have incorrect length (make sure to allocate enough beforehand).
+    fn from_hex_raw<'a>(v: &str, bytes: &mut [u8]) -> core::result::Result<usize, FromHexError> {
+        let bytes_len = v.len() - 2;
+        let mut modulus = bytes_len % 2;
+        let mut buf = 0;
+        let mut pos = 0;
+        for (index, byte) in v.bytes().enumerate().skip(2) {
+            buf <<= 4;
+
+            match byte {
+                b'A'..=b'F' => buf |= byte - b'A' + 10,
+                b'a'..=b'f' => buf |= byte - b'a' + 10,
+                b'0'..=b'9' => buf |= byte - b'0',
+                b' ' | b'\r' | b'\n' | b'\t' => {
+                    buf >>= 4;
+                    continue;
+                }
+                b => {
+                    let character = char::from(b);
+                    return Err(FromHexError::InvalidHex { character, index });
+                }
+            }
+
+            modulus += 1;
+            if modulus == 2 {
+                modulus = 0;
+                bytes[pos] = buf;
+                pos += 1;
+            }
+        }
+
+        Ok(pos)
     }
 
     fn call_rpc(rpc_node: &String, data: Vec<u8>) -> Result<Vec<u8>> {
@@ -628,7 +725,8 @@ mod phat_rpc {
             println!("genesis_hash: {:?}", genesis_hash);
             assert_eq!(
                 genesis_hash.genesis_hash,
-                "0xb0a8d493285c2df73290dfb7e61f870f17b41801197a149ca93654499ea3dafe".to_string()
+                from_hex("0xb0a8d493285c2df73290dfb7e61f870f17b41801197a149ca93654499ea3dafe")
+                    .unwrap()
             );
             // Extra params for transaction creation
             let extra = ExtraParam {
