@@ -15,16 +15,16 @@ pub struct UnsignedExtrinsic<Call> {
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
 pub struct Remark {
-    pub remark: String,
+    pub remark: Vec<u8>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-struct Transfer {
-    dest: MultiAddress<AccountId, u32>,
-    currency_id: CurrencyId,
-    amount: Compact<u128>,
-}
+// #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+// #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+// struct Transfer {
+//     dest: MultiAddress<AccountId, u32>,
+//     currency_id: CurrencyId,
+//     amount: Compact<u128>,
+// }
 
 /// A multi-format address wrapper for on-chain accounts.
 #[derive(Encode, Decode, PartialEq, Eq, Clone, Debug, scale_info::TypeInfo)]
@@ -33,7 +33,7 @@ pub enum MultiAddress<AccountId, AccountIndex> {
     /// It's an account ID (pubkey).
     Id(AccountId),
     /// It's an account index.
-    Index(#[codec(compact)] AccountIndex),
+    Index(Compact<u32>),
     /// It's some arbitrary raw bytes.
     Raw(Vec<u8>),
     /// It's a 32 byte representation.
@@ -42,7 +42,7 @@ pub enum MultiAddress<AccountId, AccountIndex> {
     Address20([u8; 20]),
 }
 
-impl<AccountId, AccountIndex> From<AccountId> for MultiAddress<AccountId, AccountIndex> {
+impl<AccountId> From<AccountId> for MultiAddress<AccountId> {
     fn from(a: AccountId) -> Self {
         Self::Id(a)
     }

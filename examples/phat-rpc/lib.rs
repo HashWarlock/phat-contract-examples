@@ -377,8 +377,8 @@ mod phat_rpc {
             // Construct the extra param
             let extra = (
                 extra_param.era,
-                Compact(account_nonce.next_nonce),
-                Compact(extra_param.tip),
+                Compact(account_nonce.next_nonce as u64),
+                Compact(extra_param.tip as u128),
             );
             // Construct signature
             let signature = {
@@ -734,7 +734,7 @@ mod phat_rpc {
                 tip: 0,
             };
             // Remark Call
-            let remark: String = "hi how are ya".to_string();
+            let remark: Vec<u8> = "hi how are ya".into();
             let call_param = transaction::UnsignedExtrinsic {
                 pallet_id: 0u8,
                 call_id: 1u8,

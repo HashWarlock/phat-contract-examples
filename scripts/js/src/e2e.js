@@ -138,7 +138,7 @@ async function main() {
         types: {
             ...Phala.types,
             'NextNonceOk': {
-                next_nonce: 'u32',
+                next_nonce: 'u64',
             },
             'RuntimeVersionOk': {
                 spec_name: 'String',
@@ -151,7 +151,7 @@ async function main() {
                 state_version: 'u32',
             },
             'GenesisHashOk': {
-                genesis_hash: 'String',
+                genesis_hash: 'Vec<u8>',
             },
             'ExtraParam': {
                 era: {
@@ -168,7 +168,7 @@ async function main() {
                 call: 'Remark',
             },
             'Remark': {
-                remark: 'String',
+                remark: 'Vec<u8>',
             }
         }
     });
