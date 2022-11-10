@@ -195,13 +195,13 @@ async function main() {
     await setupGatekeeper(api, txqueue, alice, worker);
     const clusterId = await deployCluster(api, txqueue, alice, worker);
 
-    // contracts
+    contracts
     await deployContracts(api, txqueue, alice, artifacts, clusterId);
 
     // create Fat Contract objects
     const contracts = {};
     for (const [name, contract] of Object.entries(artifacts)) {
-        const contractId = contract.address; //"0x96acef19628d6ddfb7b1a07953a07837da45fcc8b837d3dd1cab2114733c7a16";
+        const contractId = contract.address;
         const newApi = await api.clone().isReady;
         contracts[name] = new ContractPromise(
             await Phala.create({api: newApi, baseURL: pruntimeURL, contractId}),
@@ -278,7 +278,7 @@ async function main() {
 
     const sendTx = await PhatGM.query['submittableOracle::create'](
         certAlice, {},
-        'gMYcnbupX4BDAcgsmKsfi51mxhXU2LGuR6rG2bverBRxKrPrp',
+        chainPubKey.output.asOk.toString(),
         'gMYPikbyTDEZr8vDNE21ioYWP4tzQsATUkxgx9BFUg7TcL84T',
         'GM',
         1,
@@ -292,7 +292,7 @@ async function main() {
         'GMOrDie TX hash:',
         sendTx.result.isOk ? sendTx.output.toHuman() : sendTx.result.toHuman()
     );
-    const TxHash = sendTx.output.toHuman();
+    const TxHash = sendTx.output.asOk.toString();
 
     console.log('GMOrDie Sending TX: ', TxHash);
     const res = await PhatGM.query['submittableOracle::send'](
@@ -300,8 +300,7 @@ async function main() {
         TxHash
     );
 
-    console.log('GMOrDie TX sent');
-
+    console.log('GMOrDie TX sent:', res.result.isOk ? res.output.toHuman() : res.result.toHuman());
 }
 
 main().then(process.exit).catch(err => console.error('Crashed', err)).finally(() => process.exit(-1));
