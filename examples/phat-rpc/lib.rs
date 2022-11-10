@@ -109,6 +109,23 @@ mod phat_rpc {
     /// Type alias for the contract's result type.
     pub type Result<T> = core::result::Result<T, Error>;
 
+    pub trait ToArray<T, const N: usize> {
+        fn to_array(&self) -> [T; N];
+    }
+
+    impl<T, const N: usize> ToArray<T, N> for Vec<T>
+    where
+        T: Default + Copy,
+    {
+        fn to_array(&self) -> [T; N] {
+            let mut arr = [T::default(); N];
+            for (a, v) in arr.iter_mut().zip(self.iter()) {
+                *a = *v;
+            }
+            arr
+        }
+    }
+
     impl PhatRpc {
         #[ink(constructor)]
         pub fn new() -> Self {
@@ -358,21 +375,21 @@ mod phat_rpc {
                 Some(account_id) => account_id,
                 None => return Err(Error::ChainNotConfigured),
             };
-            let src_account_id: MultiAddress<AccountId> = transaction::MultiAddress::Id(src);
+            let src_account_id: MultiAddress<AccountId, u32> = transaction::MultiAddress::Id(src);
             let signer = match self.account_private.get(&account_id) {
                 Some(signer) => signer,
                 None => return Err(Error::ChainNotConfigured),
             };
             let genesis_hash_vec = genesis_hash.genesis_hash;
-            //let genesis_hash_raw = genesis_hash_vec[..];
+            let genesis_hash: [u8; 32] = genesis_hash_vec.to_array();
 
             // Construct our custom additional params.
             let additional_params = (
                 runtime_version.spec_version,
                 runtime_version.transaction_version,
-                genesis_hash_vec.clone(),
+                genesis_hash,
                 // This should be configurable tx has a lifetime
-                genesis_hash_vec,
+                genesis_hash,
             );
             // Construct the extra param
             let extra = (
@@ -422,8 +439,6 @@ mod phat_rpc {
                 encoded.extend(encoded_inner);
                 encoded
             };
-            // Encode extrinsic then send RPC Call
-            //let extrinsic_hex = vec_to_hex_string(&extrinsic);
 
             Ok(extrinsic)
         }
@@ -438,19 +453,12 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            // let account_id = match self.chain_account_id.get(&chain) {
-            //     Some(account_id) => account_id,
-            //     None => return Err(Error::ChainNotConfigured),
-            // };
-            // let verifier = match self.account_public.get(&account_id) {
-            //     Some(verifier) => verifier,
-            //     None => return Err(Error::ChainNotConfigured),
-            // };
+
             let rpc_node = match self.rpc_nodes.get(&chain) {
                 Some(rpc_node) => rpc_node,
                 None => return Err(Error::ChainNotConfigured),
             };
-            let tx_hex = vec_to_hex_string(&tx_hash);
+            let tx_hex = to_hex(&tx_hash);
             // println!("{:?}", tx_raw);
 
             let data = format!(
@@ -640,10 +648,10 @@ mod phat_rpc {
         Ok(body)
     }
 
-    fn vec_to_hex_string(v: &Vec<u8>) -> String {
+    fn to_hex(v: &Vec<u8>) -> String {
         let mut res = "0x".to_string();
         for a in v.iter() {
-            write!(res, "{:02x}", a).expect("should create hex string");
+            let _res = write!(res, "{:02x}", a);
         }
         res
     }

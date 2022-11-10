@@ -33,7 +33,7 @@ pub enum MultiAddress<AccountId, AccountIndex> {
     /// It's an account ID (pubkey).
     Id(AccountId),
     /// It's an account index.
-    Index(Compact<u32>),
+    Index(#[codec(compact)] AccountIndex),
     /// It's some arbitrary raw bytes.
     Raw(Vec<u8>),
     /// It's a 32 byte representation.
@@ -42,7 +42,7 @@ pub enum MultiAddress<AccountId, AccountIndex> {
     Address20([u8; 20]),
 }
 
-impl<AccountId> From<AccountId> for MultiAddress<AccountId> {
+impl<AccountId, AccountIndex> From<AccountId> for MultiAddress<AccountId, AccountIndex> {
     fn from(a: AccountId) -> Self {
         Self::Id(a)
     }

@@ -198,8 +198,9 @@ async function main() {
 
     // create Fat Contract objects
     const contracts = {};
+    let contractId;
     for (const [name, contract] of Object.entries(artifacts)) {
-        const contractId = contract.address;
+        contractId = contract.address;
         const newApi = await api.clone().isReady;
         contracts[name] = new ContractPromise(
             await Phala.create({api: newApi, baseURL: pruntimeURL, contractId}),
@@ -276,7 +277,7 @@ async function main() {
     );
     const genesisHashTx = genesisHash.result.isOk ? PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk) : null
     console.log(PhatRpc.registry.createType('GenesisHashOk', genesisHash.output.asOk).toHuman());
-    const remark = PhatRpc.registry.createType('Remark', { remark: 'Phala Phat Contract ID [0xd3a180775a064ca68d9e867f8e9377f49881275e45e02bd66c557caf981aab98] was here :P - hashwarlock'});
+    const remark = PhatRpc.registry.createType('Remark', { remark: `Phala Phat Contract ID [${contractId}] was here :P - hashwarlock`});
     const callParam = PhatRpc.registry.createType('UnsignedExtrinsic', {
         pallet_id: 0,
         call_id: 1,
@@ -293,7 +294,7 @@ async function main() {
     console.log(extraParams.toHuman());
     const sendTx = await PhatRpc.query['submittableOracle::createTransaction'](
         certBob, {},
-        'FrJ5yoKatvkPFyiNmS3ChWF2LrvE9AsBmBvuM78tiAeqwUk',
+        chainPubKey.output.asOk.toString(),
         'kusama',
         nextNonceTx,
         runtimeVersionTX,
@@ -307,7 +308,7 @@ async function main() {
         sendTx.result.isOk ? sendTx.output.toHuman() : sendTx.result.toHuman()
     );
 
-    const txHash = sendTx.output;
+    const txHash = sendTx.output.asOk.toString();
     const sendExtrinsic = await PhatRpc.query['submittableOracle::sendTransaction'](
         certBob, {},
         'kusama',
